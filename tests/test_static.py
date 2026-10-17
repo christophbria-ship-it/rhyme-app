@@ -60,3 +60,58 @@ def test_static_data_failure_shows_error(browser, site_url):
     pg = browser.new_page(); pg.route("**/data/words-2.json", lambda r: r.abort())
     pg.goto(site_url); pg.fill("#q", "cat"); pg.click("#go")
     expect(pg.locator(".err")).to_be_visible(); pg.screenshot(path=os.path.join(SHOTS, "static-error-data.png")); pg.close()
+
+# ---- PWA ----
+def test_manifest_valid(browser, site_url):
+    pg = browser.new_page(); pg.goto(site_url)
+    href = pg.evaluate("document.querySelector('link[rel=manifest]').href")
+    assert href == site_url + "manifest.webmanifest"
+    m = pg.evaluate("async h => { const r = await fetch(h); return {ct: r.headers.get('content-type'), j: await r.json()} }", href)
+    j = m["j"]
+    assert j["name"] == "Rhymer" and j["short_name"] and j["display"] == "standalone"
+    assert j["background_color"].upper() == "#FBF7EF" and j["theme_color"].upper() == "#7A3E1D"
+    assert j["start_url"] == "./" and j["scope"] == "./"
+    sizes = {(i["sizes"], i["purpose"]) for i in j["icons"]}
+    assert {("192x192", "any"), ("512x512", "any"), ("512x512", "maskable")} <= sizes
+    for i in j["icons"]:  # every icon loads, is a PNG of the declared size
+        dim = pg.evaluate("""async src => { const r = await fetch(new URL(src, document.querySelector('link[rel=manifest]').href));
+            const img = await createImageBitmap(await r.blob()); return [r.status, r.headers.get('content-type'), img.width, img.height] }""", i["src"])
+        w, h = map(int, i["sizes"].split("x")); assert dim == [200, "image/png", w, h], (i, dim)
+    apple = pg.evaluate("""async () => { const l = document.querySelector('link[rel=apple-touch-icon]'); const r = await fetch(l.href);
+        const img = await createImageBitmap(await r.blob()); return [r.status, img.width] }""")
+    assert apple == [200, 180]
+    for name, val in [("apple-mobile-web-app-capable", "yes"), ("apple-mobile-web-app-title", "Rhymer"), ("theme-color", "#7A3E1D")]:
+        assert pg.evaluate(f"document.querySelector('meta[name=\"{name}\"]').content") == val
+    pg.close()
+
+def test_service_worker_offline(browser, site_url):
+    ctx = browser.new_context(); pg = ctx.new_page(); pg.goto(site_url)
+    scope = pg.evaluate("navigator.serviceWorker.ready.then(r => r.scope)"); assert scope == site_url
+    pg.reload(); pg.wait_for_function("navigator.serviceWorker.controller !== null", timeout=15000)
+    keys = pg.evaluate("caches.keys()"); assert len([k for k in keys if k.startswith("rhymer-") and k != "rhymer-fonts"]) == 1
+    version = open(os.path.join(ROOT, "site", "sw.js")).read().split('const VERSION = "')[1].split('"')[0]
+    assert "rhymer-" + version in keys and len(version) == 12
+    cached = pg.evaluate("caches.open('rhymer-' + arguments[0]).then(c => c.keys()).then(ks => ks.map(r => r.url))".replace("arguments[0]", repr(version)))
+    assert any(u.endswith("data/words-7.json") for u in cached) and any(u.endswith("icons/icon-512.png") for u in cached)
+    ctx.set_offline(True)
+    pg.goto(site_url + "?w=silver")
+    expect(pg.locator("#status")).to_have_attribute("data-state", "done", timeout=30000)
+    expect(pg.locator('.w[data-w="quicksilver"]')).to_be_visible()
+    ctx.close()
+
+def test_service_worker_version_changes_with_content():
+    import hashlib
+    sw = open(os.path.join(ROOT, "site", "sw.js")).read()
+    assert "__VERSION__" not in sw and "__ASSETS__" not in sw and '"./"' in sw and "words-0.json" in sw
+
+def test_service_worker_update_replaces_old_cache(browser, site_url):
+    path = os.path.join(ROOT, "site", "sw.js"); orig = open(path).read()
+    old = orig.split('const VERSION = "')[1].split('"')[0]
+    ctx = browser.new_context(); pg = ctx.new_page(); pg.goto(site_url)
+    pg.evaluate("navigator.serviceWorker.ready"); pg.reload(); pg.wait_for_function("navigator.serviceWorker.controller !== null")
+    try:
+        open(path, "w").write(orig.replace(old, "test-update1"))
+        pg.evaluate("navigator.serviceWorker.getRegistration().then(r => r.update())")
+        pg.wait_for_function("caches.keys().then(k => window._k = k), (window._k||[]).includes('rhymer-test-update1') && !(window._k||[]).includes('rhymer-%s')" % old, timeout=20000, polling=300)
+    finally:
+        open(path, "w").write(orig); ctx.close()

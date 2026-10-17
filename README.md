@@ -23,3 +23,7 @@ API: `/api/rhymes?word=&syllables=1,2&pos=n,v,adj,adv&min_len=&max_len=&min_freq
     pip install pytest playwright && python -m playwright install --with-deps chromium
     python -m pytest -v tests     # engine, API, UI (Playwright, 3 widths), static build parity
     python tests/stress.py         # 10k lookups + 2k HTTP @16 concurrency
+
+## Installable app (PWA)
+The static site ships `manifest.webmanifest`, icons (`static/icons/`, regenerate with `python tools/make_icons.py`), iOS meta tags and `sw.js`.
+The service worker precaches the app shell + all data shards (works offline); its cache name is a content hash set by `build_static.py`, so each deploy installs a fresh cache and deletes the old one.
