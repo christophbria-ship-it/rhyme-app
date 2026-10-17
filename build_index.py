@@ -1,0 +1,134 @@
+"""Precompute rhyme indices from CMUdict + WordNet POS + frequency list -> data/index.pkl"""
+import re, pickle, math, os, collections
+D = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+VOWELS = {"AA","AE","AH","AO","AW","AY","EH","ER","EY","IH","IY","OW","OY","UH","UW"}
+# consonant families for slant ("family") rhymes
+FAM = {}
+for grp, ps in {"STOP_V":"B D G","STOP_U":"P T K","FRIC_V":"V DH Z ZH","FRIC_U":"F TH S SH HH",
+                "NAS":"M N NG","LIQ":"L R","AFF":"CH JH","GLD":"W Y"}.items():
+    for p in ps.split(): FAM[p] = grp
+
+def strip(p): return re.sub(r"\d", "", p)
+def is_v(p): return strip(p) in VOWELS
+
+def rhyme_tail(phones):
+    """phones from last primary stressed vowel (fallback secondary, then last vowel)."""
+    for mark in ("1", "2"):
+        idx = [i for i, p in enumerate(phones) if p.endswith(mark)]
+        if idx: return phones[idx[-1]:]
+    idx = [i for i, p in enumerate(phones) if is_v(p)]
+    return phones[idx[-1]:] if idx else phones
+
+def keys(phones):
+    raw = rhyme_tail(phones)
+    t = [strip(p) for p in raw]
+    stressed = any(p[-1] in "12" for p in raw)
+    perfect = " ".join(t)
+    family = " ".join(p if p in VOWELS else FAM.get(p, p) for p in t)
+    asson = ("" if stressed else "u:") + " ".join(p for p in t if p in VOWELS)
+    conson = " ".join("*" if p in VOWELS else p for p in t)
+    return perfect, family, asson, conson
+
+def load():
+    prons = collections.OrderedDict()
+    for line in open(os.path.join(D, "cmudict.dict"), encoding="utf-8"):
+        line = line.split("#")[0].strip()
+        if not line: continue
+        w, *ph = line.split()
+        w = re.sub(r"\(\d+\)$", "", w).lower()
+        prons.setdefault(w, []).append(ph)
+    freq = {}
+    for line in open(os.path.join(D, "freq.txt"), encoding="utf-8"):
+        p = line.split()
+        if len(p) == 2: freq[p[0].lower()] = int(p[1])
+    pos = collections.defaultdict(set)
+    for f, tag in (("noun","n"),("verb","v"),("adj","adj"),("adv","adv")):
+        for line in open(os.path.join(D, "wordnet", "index." + f), encoding="utf-8"):
+            if line.startswith(" "): continue
+            pos[line.split(" ", 1)[0].replace("_", " ")].add(tag)
+        # exceptions (inflected forms): went -> verb etc.
+        for line in open(os.path.join(D, "wordnet", f + ".exc"), encoding="utf-8"):
+            pos[line.split()[0]].add(tag)
+    return prons, freq, pos
+
+MANNER = {}
+for grp, ps in {"stop":"B D G P T K","fric":"V DH Z ZH F TH S SH HH","aff":"CH JH","nas":"M N NG","liq":"L R","gld":"W Y"}.items():
+    for p in ps.split(): MANNER[p] = grp
+
+def segments(phones):
+    """rhyme tail split into consonant clusters following each vowel: [[cons...], ...]"""
+    segs = []
+    for p in (strip(x) for x in rhyme_tail(phones)):
+        if p in VOWELS: segs.append([])
+        elif segs: segs[-1].append(p)
+    return segs
+
+def cons_sim(a, b):
+    """0..1 consonant similarity of two equal-length segment lists (slant rhyme score)."""
+    if len(a) != len(b) or not a: return 0.0
+    tot = 0.0
+    for x, y in zip(a, b):
+        if not x and not y: sc = 1.0
+        elif not x or not y: sc = 0.0
+        else:
+            p, q = x[-1], y[-1]
+            sc = 1.0 if p == q else 0.8 if FAM.get(p) == FAM.get(q) else 0.6 if MANNER.get(p) == MANNER.get(q) else 0.2
+            if len(x) != len(y): sc *= 0.8
+        tot += sc
+    return tot / len(a)
+
+def infer_pos(w, pos):
+    """POS for inflected forms (plurals, -ed, -ing, -er/-est) from their base form."""
+    out = set()
+    def has(b, tags): return [t for t in tags if t in pos.get(b, ())]
+    cands = []
+    if w.endswith("ies"): cands.append((w[:-3] + "y", ("n", "v")))
+    if w.endswith("es"): cands.append((w[:-2], ("n", "v")))
+    if w.endswith("s") and not w.endswith("ss"): cands.append((w[:-1], ("n", "v")))
+    for suf in ("ed", "ing"):
+        if w.endswith(suf) and len(w) > len(suf) + 2:
+            b = w[:-len(suf)]
+            cands += [(b, ("v",)), (b + "e", ("v",)), (b[:-1], ("v",)) if len(b) > 2 and b[-1] == b[-2] else (b, ())]
+            if suf == "ed" and b.endswith("i"): cands.append((b[:-1] + "y", ("v",)))
+            if suf == "ing": out.add("n") if any(has(c, ("v",)) for c, _ in cands[-3:]) else None
+    for suf in ("er", "est"):
+        if w.endswith(suf):
+            b = w[:-len(suf)]
+            cands += [(b, ("adj",)), (b + "e", ("adj",)), (b[:-1] + "y", ("adj",)) if b.endswith("i") else (b, ()), (b[:-1], ("adj",)) if len(b) > 2 and b[-1] == b[-2] else (b, ())]
+    for b, tags in cands:
+        out.update(has(b, tags))
+    if out & {"v"} and (w.endswith("ed")): out.add("adj")
+    return out if (out - {"n", "adj"} or any(has(b, t) for b, t in cands)) else set()
+
+def zipf(count, total):  # zipf-like scale 0..~8
+    return round(math.log10(count / total * 1e9), 2) if count else 0.0
+
+def build():
+    prons, freq, pos = load()
+    total = sum(freq.values())
+    words, info = [], {}
+    idx = {k: collections.defaultdict(list) for k in ("perfect","family","asson","conson")}
+    for w, pl in prons.items():
+        if "." in w: continue  # skip abbreviations like "mr."
+        i = len(words); words.append(w)
+        syl = min(sum(is_v(p) for p in ph) for ph in pl)
+        wp = pos.get(w) or infer_pos(w, pos)
+        info[w] = dict(syl=syl, freq=zipf(freq.get(w, 0), total), pos=sorted(wp), pos_inferred=w not in pos and bool(wp),
+                       segs=[segments(ph) for ph in pl],
+                       len=len(w), prons=[" ".join(ph) for ph in pl])
+        seen = set()
+        for ph in pl:
+            for name, k in zip(("perfect","family","asson","conson"), keys(ph)):
+                if (name, k) in seen: continue
+                seen.add((name, k)); idx[name][k].append(i)
+    # spelling-suffix table for out-of-vocabulary guessing: suffix -> best pron (most frequent word)
+    suf = {}
+    for w in sorted(words, key=lambda w: -info[w]["freq"]):
+        if not w.isalpha(): continue
+        for n in range(2, min(len(w), 6) + 1):
+            suf.setdefault(w[-n:], w)
+    out = dict(words=words, info=info, idx={k: dict(v) for k, v in idx.items()}, suffix=suf)
+    pickle.dump(out, open(os.path.join(D, "index.pkl"), "wb"), protocol=5)
+    print(f"words={len(words)} perfect_keys={len(idx['perfect'])}")
+
+if __name__ == "__main__": build()

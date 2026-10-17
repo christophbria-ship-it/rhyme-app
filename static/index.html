@@ -1,0 +1,23 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Rhymer — rhyming dictionary</title><link rel="stylesheet" href="/app.css"></head><body>
+<header><h1>Rhymer</h1><p class="sub">Perfect, near &amp; slant rhymes from 125k+ CMUdict words</p></header>
+<main>
+<form id="f" autocomplete="off" role="search">
+  <div class="sbox"><input id="q" type="search" placeholder="Type a word… (e.g. orange)" aria-label="Word" aria-autocomplete="list" aria-controls="sug">
+  <ul id="sug" role="listbox" hidden></ul></div>
+  <button type="submit" id="go">Find rhymes</button>
+</form>
+<details id="filters" open><summary>Filters &amp; sort</summary><div class="fgrid">
+  <label>Syllables <select id="syl"><option value="">Any</option><option>1</option><option>2</option><option>3</option><option>4</option><option value="5,6,7,8,9,10">5+</option></select></label>
+  <label>Part of speech <select id="pos"><option value="">Any</option><option value="n">Noun</option><option value="v">Verb</option><option value="adj">Adjective</option><option value="adv">Adverb</option></select></label>
+  <label>Popularity <select id="freq"><option value="">All words</option><option value="2">Known (zipf≥2)</option><option value="3">Common (≥3)</option><option value="4">Very common (≥4)</option></select></label>
+  <label>Letters min <input id="minl" type="number" min="1" max="45"></label>
+  <label>Letters max <input id="maxl" type="number" min="1" max="45"></label>
+  <label>Sort <select id="sort"><option value="score">Best match</option><option value="freq">Popularity</option><option value="alpha">A–Z</option><option value="length">Length</option></select></label>
+  <label>Show <select id="tiers"><option value="all">All strictness</option><option value="perfect">Perfect only</option><option value="near">Near only</option><option value="slant">Slant only</option></select></label>
+</div></details>
+<section id="status" aria-live="polite"></section>
+<section id="results"></section>
+</main>
+<footer>Data: CMU Pronouncing Dictionary · WordNet 3.0 (POS) · OpenSubtitles frequency list</footer>
+<script src="/app.js"></script></body></html>
