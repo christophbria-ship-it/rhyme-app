@@ -98,7 +98,9 @@ def test_slant_volume_reasonable(engine):
         assert engine.rhymes(w, min_freq=3, limit=100000)["slant_total"] < 400
 
 def test_slant_sorted_by_score(engine):
-    sc = [x["score"] for x in engine.rhymes("silver", limit=100000)["slant"]]; assert sc == sorted(sc, reverse=True)
+    r = engine.rhymes("silver", limit=100000)["slant"]
+    for dict_group in (True, False):
+        sc = [x["score"] for x in r if (x["conf"] == "dict") == dict_group]; assert sc == sorted(sc, reverse=True)
 
 # ---- POS for inflected forms ----
 @pytest.mark.parametrize("w,tag", [("cats", "n"), ("churches", "n"), ("studies", "n"), ("walked", "v"), ("stopped", "v"),
@@ -107,3 +109,39 @@ def test_inflected_pos(engine, w, tag): assert tag in engine.info[w]["pos"]
 
 def test_pos_coverage(engine):
     assert sum(1 for v in engine.info.values() if v["pos"]) > 50000
+
+# ---- expanded vocabulary (wordfreq + derived / g2p pronunciations) ----
+def test_vocab_doubled(engine):
+    assert len(engine.words) > 240000
+    c = {}
+    for v in engine.info.values(): c[v["conf"]] = c.get(v["conf"], 0) + 1
+    assert c["dict"] > 120000 and c["derived"] > 15000 and c["g2p"] > 80000
+
+@pytest.mark.parametrize("w,conf", [("covid", "g2p"), ("emojis", "g2p"), ("rizz", "g2p"), ("podcasts", "derived"),
+                                    ("tweeting", "derived"), ("hashtags", "derived")])
+def test_new_words_present(engine, w, conf):
+    assert engine.info[w]["conf"] == conf and engine.rhymes(w)["known"]
+
+def test_derived_inflection_pron(engine):
+    assert engine.info["tweeting"]["prons"] == ["T W IY1 T IH0 NG"]
+    assert engine.info["hashtags"]["prons"][0].endswith("G Z") and engine.info["podcasts"]["prons"][0].endswith("T S")
+
+def test_new_words_rhyme(engine):
+    assert "covid" in words(engine.rhymes("ovid", limit=5000), "perfect") | words(engine.rhymes("ovid", limit=5000), "near")
+    assert {"fizz", "biz"} <= words(engine.rhymes("rizz", limit=5000), "perfect")
+
+def test_generated_ranked_after_dictionary(engine):
+    r = engine.rhymes("cat", limit=5000)["perfect"]
+    conf = [x["conf"] == "dict" for x in r]; assert conf == sorted(conf, reverse=True) and not all(conf)
+
+def test_no_abbreviation_junk(engine):
+    for w in ["atc", "grt", "att"]:
+        assert engine.info.get(w, {"conf": "dict"})["conf"] == "dict"
+
+def test_popularity_filter_hides_obscure(engine):
+    r = engine.rhymes("cat", min_freq=3, limit=5000)
+    assert all(x["freq"] >= 3 for x in r["perfect"] + r["near"] + r["slant"])
+    assert r["perfect_total"] < engine.rhymes("cat", limit=5000)["perfect_total"] / 2
+
+def test_api_limit_raised(engine):
+    r = engine.rhymes("cat", limit=5000); assert len(r["slant"]) == r["slant_total"] > 400  # old UI cap was 400

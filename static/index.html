@@ -1,6 +1,9 @@
 <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Rhymer — rhyming dictionary</title><link rel="stylesheet" href="/app.css"></head><body>
-<header><h1>Rhymer</h1><p class="sub">Perfect, near &amp; slant rhymes from 125k+ CMUdict words</p></header>
+<title>Rhymer — rhyming dictionary</title>
+<meta name="theme-color" content="#FBF7EF">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet"><link rel="stylesheet" href="/app.css"></head><body>
+<header class="hero"><div class="brand"><svg class="logo" viewBox="0 0 40 40" aria-hidden="true"><circle cx="20" cy="20" r="18" fill="none" stroke="#B87333" stroke-width="2"/><path d="M12 25c3-8 6-11 8-11s3 3 2 6-4 5-4 5 6-1 10-9" fill="none" stroke="#7A3E1D" stroke-width="2.4" stroke-linecap="round"/></svg><h1>Rhymer</h1></div><p class="sub">Perfect, near &amp; slant rhymes for 250k words (CMUdict + generated)</p></header>
 <main>
 <form id="f" autocomplete="off" role="search">
   <div class="sbox"><input id="q" type="search" placeholder="Type a word… (e.g. orange)" aria-label="Word" aria-autocomplete="list" aria-controls="sug">
@@ -19,5 +22,5 @@
 <section id="status" aria-live="polite"></section>
 <section id="results"></section>
 </main>
-<footer>Data: CMU Pronouncing Dictionary · WordNet 3.0 (POS) · OpenSubtitles frequency list</footer>
+<footer>Data: CMU Pronouncing Dictionary · wordfreq · g2p_en (generated, <i>italic</i>) · WordNet 3.0 (POS)</footer>
 <script src="/app.js"></script></body></html>

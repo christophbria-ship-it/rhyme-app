@@ -16,7 +16,7 @@ $('#f').addEventListener('submit',e=>{e.preventDefault();sug.hidden=true;search(
 results.addEventListener('click',e=>{const w=e.target.closest('.w');if(w){q.value=w.dataset.w;search();scrollTo(0,0)}});
 async function search(){clearTimeout(sugTimer);sug.hidden=true;
   const w=q.value.trim();if(!w){showErr('Please enter a word.');return}
-  const p=new URLSearchParams({word:w,sort:$('#sort').value,limit:'400'});
+  const p=new URLSearchParams({word:w,sort:$('#sort').value,limit:'1000'});
   [['syllables','#syl'],['pos','#pos'],['min_freq','#freq'],['min_len','#minl'],['max_len','#maxl']].forEach(([k,s])=>{if($(s).value)p.set(k,$(s).value)});
   history.replaceState(null,'','?'+new URLSearchParams({w}));
   ctrl&&ctrl.abort();ctrl=new AbortController();
@@ -36,5 +36,5 @@ function render(d){
     const groups={};items.forEach(it=>(groups[it.syllables]=groups[it.syllables]||[]).push(it));
     return `<section class="tier" data-tier="${k}"><h2>${title}<span class="badge b-${k}">${d[k+'_total']}</span> <small>${desc}</small></h2>`+
       Object.keys(groups).sort((a,b)=>a-b).map(s=>`<div class="group"><h3>${s} syllable${s==1?'':'s'}</h3><div class="words">`+
-        groups[s].map(it=>`<span class="w ${it.freq>=4?'common':it.freq<1?'rare':''}" data-w="${esc(it.word)}" title="${esc((it.pos.join(', ')||'—')+' · zipf '+it.freq)}">${esc(it.word)}${it.matched_syllables>1?`<sup>×${it.matched_syllables}</sup>`:''}</span>`).join('')+'</div></div>').join('')+'</section>'}).join('')}
+        groups[s].map(it=>`<span class="w ${it.freq>=4?'common':it.freq<1?'rare':''}${it.conf&&it.conf!=='dict'?' gen':''}" data-w="${esc(it.word)}" title="${esc((it.pos.join(', ')||'—')+' · zipf '+it.freq+(it.conf&&it.conf!=='dict'?' · generated pronunciation ('+it.conf+')':''))}">${esc(it.word)}${it.matched_syllables>1?`<sup>×${it.matched_syllables}</sup>`:''}</span>`).join('')+'</div></div>').join('')+'</section>'}).join('')}
 const init=new URLSearchParams(location.search).get('w');if(init){q.value=init;search()}

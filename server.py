@@ -39,7 +39,7 @@ class H(BaseHTTPRequestHandler):
                                   min_len=int(q["min_len"]) if q.get("min_len") else None,
                                   max_len=int(q["max_len"]) if q.get("max_len") else None,
                                   min_freq=float(q["min_freq"]) if q.get("min_freq") else None,
-                                  sort=sort, limit=min(int(q.get("limit", 300)), 2000))
+                                  sort=sort, limit=min(int(q.get("limit", 300)), 5000))
                 r["elapsed_ms"] = round((time.perf_counter() - t) * 1000, 2)
                 return self.send(200, r)
             if u.path.startswith("/api/"): return self.send(404, {"error": "not found"})

@@ -62,3 +62,12 @@ def test_error_states(page, base_url):
     page.fill("#q", "cat"); page.click("#go"); expect(page.locator(".err")).to_contain_text("internal error"); shot(page, "error-server")
     page.unroute("**/api/rhymes*"); page.route("**/api/rhymes*", lambda r: r.abort())
     page.fill("#q", "dog"); page.click("#go"); expect(page.locator(".err")).to_be_visible(); shot(page, "error-network")
+
+def test_theme(page, base_url):
+    page.goto(base_url + "/?w=cat"); expect(page.locator("#status")).to_have_attribute("data-state", "done")
+    assert page.evaluate("getComputedStyle(document.body).backgroundColor") == "rgb(251, 247, 239)"
+    assert page.evaluate("getComputedStyle(document.querySelector('h1')).color") == "rgb(122, 62, 29)"
+    assert "Fraunces" in page.evaluate("getComputedStyle(document.querySelector('h1')).fontFamily")
+    assert page.locator(".logo").is_visible()
+    r = page.evaluate("getComputedStyle(document.querySelector('.w')).borderRadius"); assert float(r.rstrip("px")) >= 20
+    assert page.evaluate("getComputedStyle(document.querySelector('.tier')).boxShadow") != "none"

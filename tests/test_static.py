@@ -25,8 +25,8 @@ def test_parity_with_python_engine(browser, site_url, engine):
     cases = ["cat", "orange", "silver", "month", "purple", "colonel", "phlegm", "love", "it", "glorbify", "nation", "day",
              "Computer", "dog", "rhythm", "x", "don't", "well-known"]
     for w in cases:
-        js = pg.evaluate("async w => (await (await fetch('api/rhymes?limit=2000&word='+encodeURIComponent(w))).json())", w)
-        py = engine.rhymes(w, limit=2000)
+        js = pg.evaluate("async w => (await (await fetch('api/rhymes?limit=5000&word='+encodeURIComponent(w))).json())", w)
+        py = engine.rhymes(w, limit=5000)
         for t in ("perfect", "near", "slant"):
             assert [x["word"] for x in js[t]] == [x["word"] for x in py[t]], (w, t)
             assert [x["score"] for x in js[t]] == [x["score"] for x in py[t]] and [x["matched_syllables"] for x in js[t]] == [x["matched_syllables"] for x in py[t]]

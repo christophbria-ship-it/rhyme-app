@@ -1,6 +1,8 @@
 # Rhymer — rhyming dictionary
-Perfect, near, slant and multi-syllable rhymes for 125,938 CMUdict words, with syllable / part-of-speech / popularity / length filters.
-Data: CMU Pronouncing Dictionary, WordNet 3.0 (POS; inflected forms mapped to base forms), OpenSubtitles 50k frequency list (hermitdave/FrequencyWords).
+Perfect, near, slant and multi-syllable rhymes for 251,317 words (125,938 CMUdict + 20,876 rule-derived inflections + 104,503 g2p_en-generated), with syllable / part-of-speech / popularity / length filters.
+Data: CMU Pronouncing Dictionary, wordfreq 'large' English list + zipf frequencies, g2p_en (neural grapheme-to-phoneme), WordNet 3.0 (POS; inflected forms mapped to base forms).
+Generated pronunciations are lower confidence (`conf`: dict > derived > g2p), ranked after dictionary words, and shown in italics.
+`prepare_words.py` (needs `pip install wordfreq g2p_en`) regenerates `data/extra_words.tsv` and `data/zipf.tsv`; set `TARGET` for vocabulary size.
 
 ## Rhyme tiers
 - **perfect**: identical sounds from the last stressed vowel; `matched_syllables` counts how far the match extends (multi-syllable).

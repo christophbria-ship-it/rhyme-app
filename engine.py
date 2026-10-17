@@ -9,6 +9,7 @@ class Engine:
     def __init__(self, path=os.path.join(D, "index.pkl")):
         d = pickle.load(open(path, "rb"))
         self.words, self.info, self.idx, self.suffix = d["words"], d["info"], d["idx"], d["suffix"]
+        self.assonsig = d["assonsig"]
         self.sorted_words = sorted(self.words)
         self._cache = {}
 
@@ -63,11 +64,12 @@ class Engine:
         slant = {}
         for sg, k in zip(segs, ks):
             if k["asson"].startswith("u:"): continue  # no stressed vowel: assonance is meaningless
-            for i in self.idx["asson"].get(k["asson"], ()):
-                c = self.words[i]
-                if c in seen: continue
-                sc = max(cons_sim(sg, cs) for cs in self.info[c]["segs"])
-                if sc >= SLANT_MIN and sc > slant.get(c, 0): slant[c] = sc
+            for sig, ids in self.assonsig.get(k["asson"], {}).items():
+                sc = cons_sim(sg, sig)
+                if sc < SLANT_MIN: continue
+                for i in ids:
+                    c = self.words[i]
+                    if c not in seen and sc > slant.get(c, 0): slant[c] = sc
             if sum(len(x) for x in sg) >= 2:  # consonance only when there is a real consonant skeleton
                 for i in self.idx["conson"].get(k["conson"], ()):
                     c = self.words[i]
@@ -82,10 +84,10 @@ class Engine:
         w = self.normalize(word)
         if not WORD_RE.match(w): raise ValueError("invalid word")
         cd = self._candidates(w)
-        res = {"word": w, "known": not cd["guessed"], "guessed_from": cd["src"] if cd["guessed"] else None,
+        res = {"word": w, "known": not cd["guessed"], "confidence": self.info[w]["conf"] if w in self.info else "guess", "guessed_from": cd["src"] if cd["guessed"] else None,
                "pronunciations": [" ".join(p) for p in cd["prons"]], "perfect": [], "near": [], "slant": []}
         pos = set(pos) if pos else None
-        key = {"score": lambda x: (-x["matched_syllables"], -x["score"], -x["freq"], x["word"]),
+        key = {"score": lambda x: (x["conf"] != "dict", -x["matched_syllables"], -x["score"], -x["freq"], x["word"]),
                "freq": lambda x: (-x["freq"], x["word"]), "alpha": lambda x: x["word"],
                "length": lambda x: (x["len"], x["word"]), "syllables": lambda x: (x["syllables"], -x["freq"])}
         for tier in ("perfect", "near", "slant"):
@@ -99,7 +101,7 @@ class Engine:
                 if max_len and inf["len"] > max_len: continue
                 if min_freq is not None and inf["freq"] < min_freq: continue
                 items.append({"word": c, "syllables": inf["syl"], "freq": inf["freq"], "pos": inf["pos"],
-                              "len": inf["len"], "matched_syllables": m, "score": sc})
+                              "len": inf["len"], "matched_syllables": m, "score": sc, "conf": inf["conf"]})
             items.sort(key=key.get(sort, key["score"]))
             res[tier + "_total"] = len(items)
             res[tier] = items[:limit]

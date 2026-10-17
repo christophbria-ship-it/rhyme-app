@@ -1,11 +1,11 @@
-index load: 599ms, RSS after load: 223.8 MB (baseline 21.4 MB)
-engine 10k lookups (cold cache): n=10000 mean=4.77ms p50=4.13 p90=9.56 p95=11.22 p99=17.87 max=497.67
-  throughput=210 q/s
-engine 10k lookups (warm cache): n=10000 mean=4.78ms p50=4.18 p90=9.83 p95=11.52 p99=18.01 max=151.77
-  throughput=209 q/s
-  engine RSS max=341.5 MB
-HTTP 2k lookups, 16 concurrent, cold: n=2000 mean=27.71ms p50=25.17 p90=42.05 p95=49.85 p99=82.69 max=151.90
-  throughput=573 req/s
-HTTP 2k lookups, 16 concurrent, warm: n=2000 mean=21.55ms p50=20.14 p90=33.71 p95=37.95 p99=48.77 max=72.85
-  server memory: master RSS=204 MB; workers=4, RSS each≈232 MB, total PSS=809 MB
+index load: 1159ms, RSS after load: 446.9 MB (baseline 21.3 MB)
+engine 10k lookups (cold cache): n=10000 mean=2.91ms p50=1.83 p90=5.88 p95=7.83 p99=26.28 max=912.76
+  throughput=343 q/s
+engine 10k lookups (warm cache): n=10000 mean=2.94ms p50=1.94 p90=6.33 p95=8.40 p99=26.41 max=212.45
+  throughput=340 q/s
+  engine RSS max=662.7 MB
+HTTP 2k lookups, 16 concurrent, cold: n=2000 mean=21.19ms p50=18.26 p90=33.73 p95=43.08 p99=74.29 max=143.00
+  throughput=748 req/s
+HTTP 2k lookups, 16 concurrent, warm: n=2000 mean=15.48ms p50=13.99 p90=23.33 p95=28.55 p99=40.40 max=100.02
+  server memory: master RSS=414 MB; workers=4, RSS each≈466 MB, total PSS=1612 MB
 STRESS PASS (criteria: engine p95<50ms, HTTP cold p99<200ms)

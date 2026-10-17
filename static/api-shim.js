@@ -19,15 +19,18 @@ function matched(a,b){a=a.map(strip);b=b.map(strip);let n=0;for(let i=1;i<=Math.
 let W=null;const ready=(async()=>{
   const base=new URL('data/',document.baseURI),man=await(await fetch(new URL('manifest.json',base))).json();
   const parts=await Promise.all([...Array(man.shards).keys()].map(async i=>{const r=await fetch(new URL(`words-${i}.json`,base));if(!r.ok)throw new Error('data load failed');return r.json()}));
-  const rows=parts.flat(),info=new Map(),idx={perfect:new Map(),family:new Map(),asson:new Map(),conson:new Map()},words=[];
-  rows.forEach(([w,syl,freq,pos,prons],i)=>{words.push(w);const pl=prons.split("|").map(p=>p.split(" "));
-    info.set(w,{syl,freq,pos:pos?pos.split(","):[],len:w.length,prons:pl,segs:null});const seen=new Set();
+  const rows=parts.flat(),info=new Map(),idx={perfect:new Map(),family:new Map(),asson:new Map(),conson:new Map()},words=[],assonsig=new Map();
+  rows.forEach(([w,syl,freq,pos,prons,cf],i)=>{words.push(w);const pl=prons.split("|").map(p=>p.split(" "));
+    info.set(w,{syl,freq,pos:pos?pos.split(","):[],len:w.length,prons:pl,segs:null,conf:["dict","derived","g2p"][cf||0]});const seen=new Set();
     for(const ph of pl){const k=keys(ph);for(const n in idx){const sk=n+"\u0000"+k[n];if(seen.has(sk))continue;seen.add(sk);
-      let l=idx[n].get(k[n]);if(!l)idx[n].set(k[n],l=[]);l.push(i)}}});
-  const suffix=new Map();[...words].sort((a,b)=>info.get(b).freq-info.get(a).freq).forEach(w=>{if(!/^[a-z]+$/.test(w))return;
+      let l=idx[n].get(k[n]);if(!l)idx[n].set(k[n],l=[]);l.push(i)}
+      const sig=segments(ph),ss=k.asson+"\u0001"+JSON.stringify(sig);if(!seen.has(ss)){seen.add(ss);
+        let m=assonsig.get(k.asson);if(!m)assonsig.set(k.asson,m=new Map());const sk=JSON.stringify(sig);
+        let e=m.get(sk);if(!e)m.set(sk,e={sig,ids:[]});e.ids.push(i)}}});
+  const suffix=new Map();[...words].sort((a,b)=>info.get(b).freq-info.get(a).freq).forEach(w=>{if(!/^[a-z]+$/.test(w)||info.get(w).conf!=="dict")return;
     for(let n=2;n<=Math.min(w.length,6);n++){const s=w.slice(-n);if(!suffix.has(s))suffix.set(s,w)}});
   const sorted=[...words].sort((a,b)=>a<b?-1:a>b?1:0);
-  W={words,info,idx,suffix,sorted};})();
+  W={words,info,idx,suffix,sorted,assonsig};})();
 const segsOf=c=>{const i=W.info.get(c);return i.segs||(i.segs=i.prons.map(segments))};
 function prons(w){if(W.info.has(w))return[W.info.get(w).prons,false,w];
   for(let n=Math.min(w.length,6);n>1;n--){const s=W.suffix.get(w.slice(-n));if(s)return[W.info.get(s).prons,true,s]}return[[],true,null]}
@@ -37,12 +40,12 @@ function candidates(w){if(cache.has(w))return cache.get(w);const[pl,guessed,src]
   for(const[tier,name]of[["perfect","perfect"],["near","family"]])pl.forEach((ph,j)=>{for(const i of W.idx[name].get(ks[j][name])||[]){const c=W.words[i];
     if(seen.has(c))continue;seen.add(c);const m=tier==="perfect"?Math.max(...W.info.get(c).prons.map(q=>matched(ph,q))):0;out[tier].push([c,m,1])}});
   const slant=new Map();pl.forEach((ph,j)=>{const k=ks[j];if(k.asson.startsWith("u:"))return;
-    for(const i of W.idx.asson.get(k.asson)||[]){const c=W.words[i];if(seen.has(c))continue;
-      const sc=Math.max(...segsOf(c).map(cs=>consSim(sg[j],cs)));if(sc>=SLANT_MIN&&sc>(slant.get(c)||0))slant.set(c,sc)}
+    for(const{sig,ids}of(W.assonsig.get(k.asson)||new Map()).values()){const sc=consSim(sg[j],sig);if(sc<SLANT_MIN)continue;
+      for(const i of ids){const c=W.words[i];if(!seen.has(c)&&sc>(slant.get(c)||0))slant.set(c,sc)}}
     if(sg[j].reduce((a,x)=>a+x.length,0)>=2)for(const i of W.idx.conson.get(k.conson)||[]){const c=W.words[i];if(!seen.has(c)&&!slant.has(c))slant.set(c,SLANT_MIN)}});
   out.slant=[...slant].map(([c,sc])=>[c,0,Math.round(sc*1000)/1000]);if(cache.size>2000)cache.clear();cache.set(w,out);return out}
 const cmp=(a,b)=>a<b?-1:a>b?1:0;
-const SORTS={score:(a,b)=>b.matched_syllables-a.matched_syllables||b.score-a.score||b.freq-a.freq||cmp(a.word,b.word),
+const SORTS={score:(a,b)=>(a.conf!=="dict")-(b.conf!=="dict")||b.matched_syllables-a.matched_syllables||b.score-a.score||b.freq-a.freq||cmp(a.word,b.word),
   freq:(a,b)=>b.freq-a.freq||cmp(a.word,b.word),alpha:(a,b)=>cmp(a.word,b.word),length:(a,b)=>a.len-b.len||cmp(a.word,b.word),
   syllables:(a,b)=>a.syllables-b.syllables||b.freq-a.freq};
 function rhymes(q){const raw=(q.get("word")||"").trim();if(!raw)return[400,{error:"missing 'word' parameter"}];
@@ -52,12 +55,12 @@ function rhymes(q){const raw=(q.get("word")||"").trim();if(!raw)return[400,{erro
   let syl,minl,maxl,minf;try{syl=q.get("syllables")?q.get("syllables").split(",").filter(x=>x.trim()).map(x=>{const n=parseInt(x,10);if(isNaN(n)||!/^\s*-?\d+\s*$/.test(x))throw 0;return n}):null;
     minl=num("min_len");maxl=num("max_len");minf=num("min_freq")}catch(e){return[400,{error:"invalid number"}]}
   const w=raw.toLowerCase();if(!WORD_RE.test(w))return[400,{error:"invalid word"}];
-  const t0=performance.now(),cd=candidates(w),limit=Math.min(parseInt(q.get("limit")||"300",10),2000);
-  const res={word:w,known:!cd.guessed,guessed_from:cd.guessed?cd.src:null,pronunciations:cd.prons.map(p=>p.join(" ")),perfect:[],near:[],slant:[]};
+  const t0=performance.now(),cd=candidates(w),limit=Math.min(parseInt(q.get("limit")||"300",10),5000);
+  const res={word:w,known:!cd.guessed,confidence:W.info.has(w)?W.info.get(w).conf:"guess",guessed_from:cd.guessed?cd.src:null,pronunciations:cd.prons.map(p=>p.join(" ")),perfect:[],near:[],slant:[]};
   for(const tier of["perfect","near","slant"]){const items=[];for(const[c,m,sc]of cd[tier]){const inf=W.info.get(c);
       if(syl&&syl.length&&!syl.includes(inf.syl))continue;if(pos&&!inf.pos.some(p=>pos.includes(p)))continue;
       if(minl&&inf.len<minl)continue;if(maxl&&inf.len>maxl)continue;if(minf!=null&&inf.freq<minf)continue;
-      items.push({word:c,syllables:inf.syl,freq:inf.freq,pos:inf.pos,len:inf.len,matched_syllables:m,score:sc})}
+      items.push({word:c,syllables:inf.syl,freq:inf.freq,pos:inf.pos,len:inf.len,matched_syllables:m,score:sc,conf:inf.conf})}
     items.sort(SORTS[sort]);res[tier+"_total"]=items.length;res[tier]=items.slice(0,limit)}
   res.elapsed_ms=Math.round((performance.now()-t0)*100)/100;return[200,res]}
 function suggest(q){const v=(q.get("q")||"").trim().toLowerCase(),lim=parseInt(q.get("limit")||"8",10);if(!v)return[200,{suggestions:[]}];
