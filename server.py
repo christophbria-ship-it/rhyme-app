@@ -21,8 +21,21 @@ class H(BaseHTTPRequestHandler):
         b = body if isinstance(body, bytes) else json.dumps(body).encode()
         self.send_response(code); self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(b))); self.end_headers(); self.wfile.write(b)
+    def do_POST(self):
+        """POST /api/analyze with JSON {"text": ...} for long lyrics."""
+        try:
+            if urlparse(self.path).path != "/api/analyze": return self.send(404, {"error": "not found"})
+            n = int(self.headers.get("Content-Length", 0))
+            if n > 100000: return self.send(413, {"error": "body too large"})
+            body = json.loads(self.rfile.read(n) or b"{}")
+            if not isinstance(body, dict) or not isinstance(body.get("text"), str): return self.send(400, {"error": "missing 'text'"})
+            return self.send(200, ENGINE.analyze(body["text"]))
+        except ValueError as e:
+            self.send(400, {"error": str(e)})
+        except Exception:
+            self.send(500, {"error": "internal error"})
     def do_GET(self):
-        u = urlparse(self.path); q = {k: v[0] for k, v in parse_qs(u.query).items()}
+        u = urlparse(self.path); q = {k: v[0] for k, v in parse_qs(u.query, keep_blank_values=True).items()}
         try:
             if u.path == "/api/health":
                 return self.send(200, {"ok": True, "words": len(ENGINE.words)})
@@ -39,9 +52,19 @@ class H(BaseHTTPRequestHandler):
                                   min_len=int(q["min_len"]) if q.get("min_len") else None,
                                   max_len=int(q["max_len"]) if q.get("max_len") else None,
                                   min_freq=float(q["min_freq"]) if q.get("min_freq") else None,
-                                  sort=sort, limit=min(int(q.get("limit", 300)), 5000))
+                                  sort=sort, limit=min(int(q.get("limit", 300)), 5000),
+                                  theme=q.get("theme") or None, theme_only=q.get("theme_only") in ("1", "true"))
                 r["elapsed_ms"] = round((time.perf_counter() - t) * 1000, 2)
                 return self.send(200, r)
+            if u.path == "/api/themes":
+                return self.send(200, {"themes": [{"id": k, "label": v, "size": len(ENGINE.themes[k])} for k, v in ENGINE.theme_labels.items()]})
+            if u.path == "/api/analyze":
+                if "text" not in q: return self.send(400, {"error": "missing 'text' parameter"})
+                return self.send(200, ENGINE.analyze(q["text"]))
+            if u.path == "/api/line":
+                if not q.get("prev", "").strip(): return self.send(400, {"error": "missing 'prev' parameter"})
+                return self.send(200, ENGINE.line_help(q["prev"], q.get("line", ""), theme=q.get("theme") or None,
+                                                       limit=min(int(q.get("limit", 40)), 500)))
             if u.path.startswith("/api/"): return self.send(404, {"error": "not found"})
             path = "index.html" if u.path in ("/", "") else u.path.lstrip("/")
             f = os.path.normpath(os.path.join(ROOT, "static", path))

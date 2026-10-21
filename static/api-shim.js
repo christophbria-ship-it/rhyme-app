@@ -30,7 +30,9 @@ let W=null;const ready=(async()=>{
   const suffix=new Map();[...words].sort((a,b)=>info.get(b).freq-info.get(a).freq).forEach(w=>{if(!/^[a-z]+$/.test(w)||info.get(w).conf!=="dict")return;
     for(let n=2;n<=Math.min(w.length,6);n++){const s=w.slice(-n);if(!suffix.has(s))suffix.set(s,w)}});
   const sorted=[...words].sort((a,b)=>a<b?-1:a>b?1:0);
-  W={words,info,idx,suffix,sorted,assonsig};})();
+  let themes={};try{const tr=await fetch(new URL('themes.json',base));if(tr.ok)themes=await tr.json()}catch(e){}
+  const tsets={};for(const k in themes)tsets[k]=new Set(themes[k].words);
+  W={words,info,idx,suffix,sorted,assonsig,themes,tsets};})();
 const segsOf=c=>{const i=W.info.get(c);return i.segs||(i.segs=i.prons.map(segments))};
 function prons(w){if(W.info.has(w))return[W.info.get(w).prons,false,w];
   for(let n=Math.min(w.length,6);n>1;n--){const s=W.suffix.get(w.slice(-n));if(s)return[W.info.get(s).prons,true,s]}return[[],true,null]}
@@ -55,23 +57,62 @@ function rhymes(q){const raw=(q.get("word")||"").trim();if(!raw)return[400,{erro
   let syl,minl,maxl,minf;try{syl=q.get("syllables")?q.get("syllables").split(",").filter(x=>x.trim()).map(x=>{const n=parseInt(x,10);if(isNaN(n)||!/^\s*-?\d+\s*$/.test(x))throw 0;return n}):null;
     minl=num("min_len");maxl=num("max_len");minf=num("min_freq")}catch(e){return[400,{error:"invalid number"}]}
   const w=raw.toLowerCase();if(!WORD_RE.test(w))return[400,{error:"invalid word"}];
+  const theme=q.get("theme")||null,themeOnly=["1","true"].includes(q.get("theme_only"));if(theme&&!W.tsets[theme])return[400,{error:"unknown theme"}];
+  const tset=theme?W.tsets[theme]:null;
   const t0=performance.now(),cd=candidates(w),limit=Math.min(parseInt(q.get("limit")||"300",10),5000);
   const res={word:w,known:!cd.guessed,confidence:W.info.has(w)?W.info.get(w).conf:"guess",guessed_from:cd.guessed?cd.src:null,pronunciations:cd.prons.map(p=>p.join(" ")),perfect:[],near:[],slant:[]};
   for(const tier of["perfect","near","slant"]){const items=[];for(const[c,m,sc]of cd[tier]){const inf=W.info.get(c);
       if(syl&&syl.length&&!syl.includes(inf.syl))continue;if(pos&&!inf.pos.some(p=>pos.includes(p)))continue;
       if(minl&&inf.len<minl)continue;if(maxl&&inf.len>maxl)continue;if(minf!=null&&inf.freq<minf)continue;
-      items.push({word:c,syllables:inf.syl,freq:inf.freq,pos:inf.pos,len:inf.len,matched_syllables:m,score:sc,conf:inf.conf})}
-    items.sort(SORTS[sort]);res[tier+"_total"]=items.length;res[tier]=items.slice(0,limit)}
+      items.push({word:c,syllables:inf.syl,freq:inf.freq,pos:inf.pos,len:inf.len,matched_syllables:m,score:sc,conf:inf.conf,themed:!!tset&&tset.has(c)})}
+    let its=tset&&themeOnly?items.filter(x=>x.themed):items;its.sort(SORTS[sort]);if(tset)its.sort((a,b)=>(!a.themed)-(!b.themed));
+    res[tier+"_total"]=its.length;res[tier]=its.slice(0,limit)}
+  res.theme=theme;res.themed_total=tset?["perfect","near","slant"].reduce((a,t)=>a+res[t].filter(x=>x.themed).length,0):0;
   res.elapsed_ms=Math.round((performance.now()-t0)*100)/100;return[200,res]}
 function suggest(q){const v=(q.get("q")||"").trim().toLowerCase(),lim=parseInt(q.get("limit")||"8",10);if(!v)return[200,{suggestions:[]}];
   let lo=0,hi=W.sorted.length;while(lo<hi){const m=(lo+hi)>>1;if(W.sorted[m]<v)lo=m+1;else hi=m}
   const out=[];for(let i=lo;i<W.sorted.length&&W.sorted[i].startsWith(v)&&out.length<400;i++)out.push(W.sorted[i]);
   out.sort((a,b)=>W.info.get(b).freq-W.info.get(a).freq||a.length-b.length);return[200,{suggestions:out.slice(0,lim)}]}
+// ---- songwriting: lyrics analysis & line helper (port of Engine.analyze / Engine.line_help) ----
+const TOKEN=/[A-Za-z][A-Za-z']*(?:-[A-Za-z']+)*/g;
+function wordInfo(raw){const w=raw.toLowerCase().replace(/^'+|'+$/g,"");const[pl,guessed]=w?prons(w):[[],true];const ph=pl[0]||[];
+  let stress=ph.filter(p=>VOWELS.has(strip(p))).map(p=>/[12]$/.test(p)?"/":"u").join("");
+  if(!ph.length)stress="u".repeat(Math.max(1,(w.match(/[aeiouy]+/g)||[]).length));
+  return{word:raw,norm:w,syllables:stress.length,stress,known:!guessed,keys:[...new Set(pl.map(p=>keys(p).perfect))].sort(),fkeys:[...new Set(pl.map(p=>keys(p).family))].sort()}}
+function analyzeText(text){if(text==null)throw new RangeError("missing text");if(text.length>10000)throw new RangeError("text too long");
+  const lines=[],parts=[];let stanza=[],groups=[];const letter=i=>i<26?String.fromCharCode(65+i):"Z";
+  for(const raw of text.split("\n").slice(0,400)){const toks=raw.match(TOKEN)||[];
+    if(!toks.length){lines.push({text:raw,words:[],syllables:0,end:null,letter:null,match:null});if(stanza.length){parts.push(stanza.join(""));stanza=[];groups=[]}continue}
+    const ws=toks.map(wordInfo),end=ws[ws.length-1],pk=new Set(end.keys),fk=new Set(end.fkeys);let let_=null,match=null;
+    const inter=(a,b)=>[...a].some(x=>b.has(x));
+    for(const g of groups){if(end.norm===g.end){let_=g.l;match="repeat";break}if(inter(pk,g.pk)){let_=g.l;match="perfect";break}}
+    if(let_===null)for(const g of groups){if(inter(fk,g.fk)){let_=g.l;match="near";break}}
+    if(let_===null){let_=letter(groups.length);groups.push({l:let_,pk,fk,end:end.norm})}
+    else{const g=groups.find(g=>g.l===let_);g.pk=new Set([...g.pk,...pk]);g.fk=new Set([...g.fk,...fk])}
+    stanza.push(let_);
+    lines.push({text:raw,words:ws.map(({keys,fkeys,...x})=>x),syllables:ws.reduce((a,x)=>a+x.syllables,0),stress:ws.map(x=>x.stress).join(" "),end:end.norm,letter:let_,match})}
+  if(stanza.length)parts.push(stanza.join(""));
+  return{lines,scheme:parts.join(" "),total_lines:lines.filter(l=>l.words.length).length,total_syllables:lines.reduce((a,l)=>a+l.syllables,0)}}
+function analyze(q){if(!q.has("text"))return[400,{error:"missing 'text' parameter"}];try{return[200,analyzeText(q.get("text"))]}catch(e){if(e instanceof RangeError)return[400,{error:e.message}];throw e}}
+function lineHelp(q){const prev=q.get("prev")||"";if(!prev.trim())return[400,{error:"missing 'prev' parameter"}];
+  const theme=q.get("theme")||null,limit=Math.min(parseInt(q.get("limit")||"40",10),500);
+  const a=analyzeText(prev.trim()+"\n"+(q.get("line")||"").trim()),p=a.lines[0],l=a.lines[1];
+  if(!p.words.length)return[400,{error:"previous line has no words"}];
+  const needed=p.syllables-l.syllables;
+  const call=syl=>{const u=new URLSearchParams({word:p.end,min_freq:"2",limit:String(limit),sort:"score"});if(theme)u.set("theme",theme);if(syl)u.set("syllables",String(syl));return rhymes(u)};
+  let[st,r]=call(needed>=1?needed:null);if(st!==200)return[st,r];let fit=needed>=1;
+  if(fit&&!(r.perfect.length||r.near.length)){[st,r]=call(null);fit=false;if(st!==200)return[st,r]}
+  const sug={};for(const t of["perfect","near","slant"])sug[t]=r[t].filter(x=>/[aeiouy]/.test(x.word));
+  return[200,{prev:p,line:l,target_syllables:p.syllables,needed:needed>=1?needed:null,fits_count:fit,end_word:p.end,theme,suggestions:sug}]}
+function themesList(){return[200,{themes:Object.entries(W.themes).map(([id,t])=>({id,label:t.label,size:W.tsets[id].size}))}]}
 const realFetch=window.fetch.bind(window);
 window.fetch=async(input,init)=>{const url=new URL(typeof input==="string"?input:input.url,location.href);
   const p=url.pathname.replace(/.*\/api\//,"/api/");if(!url.pathname.includes("/api/"))return realFetch(input,init);
   await ready;if(init&&init.signal&&init.signal.aborted)throw new DOMException("aborted","AbortError");
-  let r;try{r=p==="/api/rhymes"?rhymes(url.searchParams):p==="/api/suggest"?suggest(url.searchParams):p==="/api/health"?[200,{ok:true,words:W.words.length}]:[404,{error:"not found"}]}
+  let r;try{
+    if(init&&init.method==="POST"){if(p!=="/api/analyze")r=[404,{error:"not found"}];else{let b;try{b=JSON.parse(init.body||"{}")}catch(e){b=null}
+      r=b&&typeof b.text==="string"?(()=>{try{return[200,analyzeText(b.text)]}catch(e){return[400,{error:e.message}]}})():[400,{error:"missing 'text'"}]}}
+    else r=p==="/api/themes"?themesList():p==="/api/analyze"?analyze(url.searchParams):p==="/api/line"?lineHelp(url.searchParams):p==="/api/rhymes"?rhymes(url.searchParams):p==="/api/suggest"?suggest(url.searchParams):p==="/api/health"?[200,{ok:true,words:W.words.length}]:[404,{error:"not found"}]}
   catch(e){r=[500,{error:"internal error"}]}
   return new Response(JSON.stringify(r[1]),{status:r[0],headers:{"Content-Type":"application/json"}})};
 window.RHYME_READY=ready;

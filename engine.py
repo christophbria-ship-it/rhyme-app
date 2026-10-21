@@ -1,5 +1,5 @@
 """Rhyme engine: loads precomputed indices, answers queries."""
-import os, pickle, re, bisect
+import os, pickle, re, bisect, json
 from build_index import keys, strip, VOWELS, rhyme_tail, segments, cons_sim
 SLANT_MIN = 0.6
 D = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
@@ -12,6 +12,10 @@ class Engine:
         self.assonsig = d["assonsig"]
         self.sorted_words = sorted(self.words)
         self._cache = {}
+        tp = os.path.join(D, "themes.json")
+        t = json.load(open(tp)) if os.path.exists(tp) else {}
+        self.themes = {k: set(v["words"]) for k, v in t.items()}
+        self.theme_labels = {k: v["label"] for k, v in t.items()}
 
     @staticmethod
     def normalize(w):
@@ -80,9 +84,11 @@ class Engine:
         return out
 
     def rhymes(self, word, syllables=None, pos=None, min_len=None, max_len=None,
-               min_freq=None, sort="score", limit=200, include=("perfect", "near", "slant")):
+               min_freq=None, sort="score", limit=200, include=("perfect", "near", "slant"), theme=None, theme_only=False):
         w = self.normalize(word)
         if not WORD_RE.match(w): raise ValueError("invalid word")
+        if theme and theme not in self.themes: raise ValueError("unknown theme")
+        tset = self.themes.get(theme) if theme else None
         cd = self._candidates(w)
         res = {"word": w, "known": not cd["guessed"], "confidence": self.info[w]["conf"] if w in self.info else "guess", "guessed_from": cd["src"] if cd["guessed"] else None,
                "pronunciations": [" ".join(p) for p in cd["prons"]], "perfect": [], "near": [], "slant": []}
@@ -101,8 +107,75 @@ class Engine:
                 if max_len and inf["len"] > max_len: continue
                 if min_freq is not None and inf["freq"] < min_freq: continue
                 items.append({"word": c, "syllables": inf["syl"], "freq": inf["freq"], "pos": inf["pos"],
-                              "len": inf["len"], "matched_syllables": m, "score": sc, "conf": inf["conf"]})
+                              "len": inf["len"], "matched_syllables": m, "score": sc, "conf": inf["conf"],
+                              "themed": bool(tset) and c in tset})
+            if tset is not None and theme_only: items = [x for x in items if x["themed"]]
             items.sort(key=key.get(sort, key["score"]))
+            if tset is not None: items.sort(key=lambda x: not x["themed"])  # stable: on-theme words first
             res[tier + "_total"] = len(items)
             res[tier] = items[:limit]
+        res["theme"] = theme
+        res["themed_total"] = sum(1 for t in ("perfect", "near", "slant") for x in res[t] if x["themed"]) if tset is not None else 0
         return res
+
+    # ---------------- songwriting: lyrics analysis & line helper ----------------
+    TOKEN = re.compile(r"[A-Za-z][A-Za-z']*(?:-[A-Za-z']+)*")
+
+    def word_info(self, raw):
+        w = raw.lower().strip("'")
+        prons, guessed, src = self.pronunciations(w) if w else ([], True, None)
+        ph = prons[0] if prons else []
+        stress = "".join("/" if p[-1] in "12" else "u" for p in ph if strip(p) in VOWELS)
+        if not ph: stress = "u" * max(1, len(re.findall(r"[aeiouy]+", w)))  # crude fallback
+        return {"word": raw, "norm": w, "syllables": len(stress), "stress": stress, "known": not guessed,
+                "keys": sorted({keys(p)[0] for p in prons}), "fkeys": sorted({keys(p)[1] for p in prons})}
+
+    def analyze(self, text):
+        """Per-line syllable counts, stress patterns and a rhyme scheme (letters restart at each blank-line stanza)."""
+        if text is None: raise ValueError("missing text")
+        if len(text) > 10000: raise ValueError("text too long")
+        lines, scheme_parts, stanza = [], [], []
+        groups = []  # (letter, perfect keys, family keys, end word) for the current stanza
+        def letter(i): return chr(65 + i) if i < 26 else "Z"
+        for raw in text.split("\n")[:400]:
+            toks = self.TOKEN.findall(raw)
+            if not toks:
+                lines.append({"text": raw, "words": [], "syllables": 0, "end": None, "letter": None, "match": None})
+                if stanza: scheme_parts.append("".join(stanza)); stanza = []; groups = []
+                continue
+            ws = [self.word_info(t) for t in toks]
+            end = ws[-1]; pk, fk = set(end["keys"]), set(end["fkeys"])
+            let = match = None
+            for g in groups:
+                if end["norm"] == g[3]: let, match = g[0], "repeat"; break
+                if pk & g[1]: let, match = g[0], "perfect"; break
+            if let is None:
+                for g in groups:
+                    if fk & g[2]: let, match = g[0], "near"; break
+            if let is None:
+                let = letter(len(groups)); groups.append((let, pk, fk, end["norm"]))
+            else:
+                for i, g in enumerate(groups):
+                    if g[0] == let: groups[i] = (let, g[1] | pk, g[2] | fk, g[3])
+            stanza.append(let)
+            lines.append({"text": raw, "words": [{k: v for k, v in x.items() if k not in ("keys", "fkeys")} for x in ws],
+                          "syllables": sum(x["syllables"] for x in ws), "stress": " ".join(x["stress"] for x in ws),
+                          "end": end["norm"], "letter": let, "match": match})
+        if stanza: scheme_parts.append("".join(stanza))
+        return {"lines": lines, "scheme": " ".join(scheme_parts),
+                "total_lines": sum(1 for l in lines if l["words"]), "total_syllables": sum(l["syllables"] for l in lines)}
+
+    def line_help(self, prev, line="", theme=None, limit=40):
+        """Suggest end words that rhyme with the previous line and complete `line` to the same syllable count."""
+        a = self.analyze((prev or "").strip() + "\n" + (line or "").strip())
+        p, l = a["lines"][0], a["lines"][1]
+        if not p["words"]: raise ValueError("previous line has no words")
+        needed = p["syllables"] - l["syllables"]
+        base = dict(theme=theme, limit=limit, sort="score")
+        r = self.rhymes(p["end"], syllables=[needed] if needed >= 1 else None, min_freq=2, **base)
+        fit = needed >= 1
+        if fit and not (r["perfect"] or r["near"]):  # nothing fits the count: fall back to any length
+            r = self.rhymes(p["end"], min_freq=2, **base); fit = False
+        return {"prev": p, "line": l, "target_syllables": p["syllables"], "needed": needed if needed >= 1 else None,
+                "fits_count": fit, "end_word": p["end"], "theme": theme,
+                "suggestions": {t: [x for x in r[t] if re.search(r"[aeiouy]", x["word"])] for t in ("perfect", "near", "slant")}}

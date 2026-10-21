@@ -8,6 +8,7 @@ rows = [[w, d["info"][w]["syl"], d["info"][w]["freq"], ",".join(d["info"][w]["po
 n = (len(rows) + SHARDS - 1) // SHARDS
 for i in range(SHARDS):
     json.dump(rows[i*n:(i+1)*n], open(os.path.join(OUT, "data", f"words-{i}.json"), "w"), separators=(",", ":"))
+shutil.copy(os.path.join(ROOT, "data", "themes.json"), os.path.join(OUT, "data", "themes.json"))
 json.dump({"shards": SHARDS, "words": len(rows)}, open(os.path.join(OUT, "data", "manifest.json"), "w"))
 for f in ("app.css", "app.js", "manifest.webmanifest"): shutil.copy(os.path.join(ROOT, "static", f), OUT)
 shutil.copytree(os.path.join(ROOT, "static", "icons"), os.path.join(OUT, "icons"))

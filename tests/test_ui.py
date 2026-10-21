@@ -71,3 +71,56 @@ def test_theme(page, base_url):
     assert page.locator(".logo").is_visible()
     r = page.evaluate("getComputedStyle(document.querySelector('.w')).borderRadius"); assert float(r.rstrip("px")) >= 20
     assert page.evaluate("getComputedStyle(document.querySelector('.tier')).boxShadow") != "none"
+
+# ---- songwriting UI ----
+VERSE = "I walked along the lonely shore\nThe waves were crashing at my feet\nI couldn't take it anymore\nMy heart was skipping every beat\n\nSilver moon and orange sky\nWatch the city lights go by"
+
+def test_tabs(page, base_url):
+    page.goto(base_url)
+    for t in ("line", "pad", "rhymes"):
+        page.click(f"#t-{t}"); expect(page.locator(f"#tab-{t}")).to_be_visible()
+        expect(page.locator(f"#t-{t}")).to_have_attribute("aria-selected", "true")
+        for o in {"rhymes", "line", "pad"} - {t}: expect(page.locator(f"#tab-{o}")).to_be_hidden()
+    page.goto(base_url + "/#pad"); expect(page.locator("#tab-pad")).to_be_visible()
+
+def test_theme_toggle(page, base_url):
+    page.goto(base_url + "/?w=night"); expect(page.locator("#status")).to_have_attribute("data-state", "done")
+    assert page.locator(".w.on").count() == 0 and page.is_disabled("#theme")
+    page.locator(".switch").click(); expect(page.locator("#theme")).to_be_enabled()
+    page.select_option("#theme", "night"); expect(page.locator(".ontheme")).to_be_visible()
+    expect(page.locator('.tier[data-tier="perfect"] .w').first).to_have_class(re.compile(r"\bon\b"))
+    assert page.locator('.tier[data-tier="perfect"] .w.on[data-w="light"]').count() == 1
+    page.wait_for_timeout(350); shot(page, "theme-on")
+    page.check("#themeOnly"); expect(page.locator(".w:not(.on)")).to_have_count(0)
+    page.reload(); expect(page.locator("#themeToggle")).to_be_checked(); expect(page.locator("#theme")).to_have_value("night")
+    page.locator(".switch").click(); expect(page.locator(".ontheme")).to_have_count(0)
+
+def test_line_helper(page, base_url):
+    page.goto(base_url + "/#line"); page.click("#lineGo"); expect(page.locator("#lineStatus .err")).to_be_visible()
+    page.click("#lineSample"); expect(page.locator("#lineStatus")).to_have_attribute("data-state", "done")
+    expect(page.locator("#lineStatus")).to_contain_text("needs 3 more syllables")
+    sups = page.locator('#lineOut .tier[data-tier="perfect"] .sugw sup').all_inner_texts(); assert sups and set(sups) == {"3"}
+    assert page.locator(".mrow").count() == 2 and page.locator(".mw").count() >= 10
+    page.wait_for_timeout(350); shot(page, "line-helper")
+    first = page.locator('#lineOut .tier[data-tier="perfect"] .sugw').first; w = first.get_attribute("data-w"); first.click()
+    expect(page.locator("#curLine")).to_have_value("My heart was skipping " + w)
+    expect(page.locator("#lineStatus")).to_contain_text("already as long")
+    assert page.evaluate("document.documentElement.scrollWidth") <= SIZES[page.size_name][0]
+
+def test_lyrics_pad(page, base_url):
+    page.goto(base_url + "/#pad"); page.fill("#pad", VERSE)
+    expect(page.locator("#scheme")).to_contain_text("ABAB AA")
+    expect(page.locator("#padLines .syl")).to_have_count(6)
+    assert page.locator("#padLines .syl").all_inner_texts()[:2] == ["8", "8"]
+    expect(page.locator("#padStats")).to_contain_text("6 lines"); expect(page.locator("#padSaved")).to_have_text("Saved")
+    page.wait_for_timeout(350); shot(page, "lyrics-pad")
+    page.reload(); expect(page.locator("#pad")).to_have_value(VERSE); expect(page.locator("#scheme")).to_contain_text("ABAB AA")
+    page.locator('.endw[data-w="feet"]').click(); expect(page.locator("#tab-rhymes")).to_be_visible()
+    expect(page.locator("#q")).to_have_value("feet"); expect(page.locator('.w[data-w="beat"]').first).to_be_visible()
+    page.goto(base_url + "/#pad"); page.once("dialog", lambda d: d.accept()); page.click("#padClear")
+    expect(page.locator("#pad")).to_have_value(""); expect(page.locator("#padStats")).to_contain_text("will appear here")
+
+def test_lyrics_pad_error(page, base_url):
+    page.route("**/api/analyze", lambda r: r.fulfill(status=500, content_type="application/json", body='{"error":"internal error"}'))
+    page.goto(base_url + "/#pad"); page.fill("#pad", "hello world")
+    expect(page.locator("#padStats .err")).to_contain_text("internal error")

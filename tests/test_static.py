@@ -115,3 +115,33 @@ def test_service_worker_update_replaces_old_cache(browser, site_url):
         pg.wait_for_function("caches.keys().then(k => window._k = k), (window._k||[]).includes('rhymer-test-update1') && !(window._k||[]).includes('rhymer-%s')" % old, timeout=20000, polling=300)
     finally:
         open(path, "w").write(orig); ctx.close()
+
+def test_songwriting_parity(browser, site_url, engine):
+    pg = browser.new_page(); pg.goto(site_url); pg.evaluate("window.RHYME_READY")
+    texts = ["I walked along the lonely shore\nThe waves were crashing at my feet\nI couldn't take it anymore\nMy heart was skipping every beat",
+             "my love\nthe sky above\nthe month\nonce\nmy love", "one two\nred shoe\n\nbig tree\nsee me", "glorbify the zzyzx!!\n\n\n", "", "Rock'n'roll — well-known don't"]
+    for t in texts:
+        js = pg.evaluate("async t => (await (await fetch('api/analyze', {method:'POST', body: JSON.stringify({text:t})})).json())", t)
+        assert js == engine.analyze(t), t
+    for prev, line, theme in [("The waves were crashing at my feet", "My heart was skipping", "love"), ("I walked along the lonely shore", "", None),
+                              ("Silver moon and orange sky", "Watch the city lights go", "night")]:
+        js = pg.evaluate("async a => (await (await fetch('api/line?' + new URLSearchParams(a))).json())",
+                         {k: v for k, v in {"prev": prev, "line": line, "theme": theme or "", "limit": "40"}.items()})
+        assert js == engine.line_help(prev, line, theme=theme, limit=40), prev
+    js = pg.evaluate("async () => (await (await fetch('api/rhymes?word=night&theme=night&limit=5000')).json())")
+    py = engine.rhymes("night", theme="night", limit=5000)
+    for t in ("perfect", "near", "slant"): assert [(x["word"], x["themed"]) for x in js[t]] == [(x["word"], x["themed"]) for x in py[t]]
+    assert js["themed_total"] == py["themed_total"]
+    th = pg.evaluate("async () => (await (await fetch('api/themes')).json()).themes")
+    assert [t["id"] for t in th] == list(engine.theme_labels) and all(t["size"] == len(engine.themes[t["id"]]) for t in th)
+    for q, code in [("api/analyze", 400), ("api/line?prev=", 400), ("api/rhymes?word=cat&theme=zz", 400)]:
+        assert pg.evaluate("async q => (await fetch(q)).status", q) == code
+    pg.close()
+
+def test_static_songwriting_ui_offline(browser, site_url):
+    ctx = browser.new_context(viewport={"width": 390, "height": 844}); pg = ctx.new_page(); pg.goto(site_url)
+    pg.evaluate("navigator.serviceWorker.ready"); pg.reload(); pg.wait_for_function("navigator.serviceWorker.controller !== null")
+    pg.wait_for_timeout(1500); ctx.set_offline(True)
+    pg.goto(site_url + "#pad"); pg.fill("#pad", "the cat\nthe hat"); expect(pg.locator("#scheme")).to_contain_text("AA", timeout=30000)
+    pg.goto(site_url + "#line"); pg.click("#lineSample"); expect(pg.locator("#lineStatus")).to_contain_text("needs 3 more syllables", timeout=30000)
+    ctx.close()
