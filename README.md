@@ -44,7 +44,7 @@ The default theme mode is now **"Related to my word"**. A search for *snow* brin
 
 ## AI line writer (Cloudflare Worker)
 
-`worker/` holds a Cloudflare Worker (`rhymer-ai`) that uses Workers AI (`@cf/meta/llama-3.1-8b-instruct-fast`). You give it a lyric line and it returns 5–8 next lines that loosely rhyme. The app re-ranks them with the local rhyme engine (`POST /api/rank_lines`) so the true rhymes come first. The worker restricts CORS to the Pages origin, rate-limits each IP (12/min, 300/day per isolate), caps input lengths, and keeps no secrets on the client.
+`worker/` holds a Cloudflare Worker (`rhymer-ai`) that uses Workers AI (`@cf/meta/llama-3.1-8b-instruct-fp8`). You give it a lyric line and it returns 5–8 next lines that loosely rhyme. The app re-ranks them with the local rhyme engine (`POST /api/rank_lines`) so the true rhymes come first. The worker restricts CORS to the Pages origin, rate-limits each IP (12/min, 300/day per isolate), caps input lengths, and keeps no secrets on the client.
 
 Deploy:
 

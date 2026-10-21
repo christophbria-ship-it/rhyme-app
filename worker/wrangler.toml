@@ -8,4 +8,4 @@ binding = "AI"
 
 [vars]
 ALLOWED_ORIGINS = "https://christophbria-ship-it.github.io"
-MODEL = "@cf/meta/llama-3.1-8b-instruct-fast"
+MODEL = "@cf/meta/llama-3.1-8b-instruct-fp8"

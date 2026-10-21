@@ -177,9 +177,7 @@ tests/test_ui.py::test_lyrics_pad[desktop] PASSED                        [ 91%]
 tests/test_ui.py::test_lyrics_pad_error[mobile] PASSED                   [ 92%]
 tests/test_ui.py::test_lyrics_pad_error[tablet] PASSED                   [ 92%]
 tests/test_ui.py::test_lyrics_pad_error[desktop] PASSED                  [ 93%]
-tests/test_ui.py::test_related_card[mobile] PASSED                       [ 94%]----------------------------------------
-Exception occurred during processing of request from ('127.0.0.1', 54684)
-
+tests/test_ui.py::test_related_card[mobile] PASSED                       [ 94%]
 tests/test_ui.py::test_related_card[tablet] PASSED                       [ 94%]
 tests/test_ui.py::test_related_card[desktop] PASSED                      [ 95%]
 tests/test_ui.py::test_ai_line_writer[mobile] PASSED                     [ 95%]
@@ -192,4 +190,4 @@ tests/test_ui.py::test_ai_lyrics_pad[mobile] PASSED                      [ 98%]
 tests/test_ui.py::test_ai_lyrics_pad[tablet] PASSED                      [ 99%]
 tests/test_ui.py::test_ai_lyrics_pad[desktop] PASSED                     [100%]
 
-======================== 185 passed in 74.69s (0:01:14) ========================
+======================== 185 passed in 82.16s (0:01:22) ========================

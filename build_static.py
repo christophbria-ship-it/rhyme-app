@@ -39,7 +39,7 @@ import hashlib
 allfiles = sorted(os.path.relpath(os.path.join(dp, f), OUT).replace(os.sep, "/") for dp, _, fs in os.walk(OUT) for f in fs if f not in (".nojekyll",))
 # association shards are fetched lazily and cached at runtime by the service worker (not precached)
 assets = ["./"] + [a for a in allfiles if not a.startswith("data/assoc/shard-")]
-h = hashlib.sha256(b"rhymer-v4")
+h = hashlib.sha256(b"rhymer-v5")
 for a in allfiles: h.update(a.encode()); h.update(open(os.path.join(OUT, a), "rb").read())
 sw = open(os.path.join(ROOT, "static", "sw.js")).read().replace("__VERSION__", h.hexdigest()[:12]).replace("__ASSETS__", json.dumps(assets))
 open(os.path.join(OUT, "sw.js"), "w").write(sw)

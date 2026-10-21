@@ -2,7 +2,7 @@
 // POST /lines {line, mood?, count?, syllables?, end_word?, rhymes?: [..], context?: "...", exclude?: [..]}
 //   -> {lines: [...], model, ms}
 // No secrets live in the client: the Workers AI binding (env.AI) is server-side only.
-export const DEFAULT_MODEL = "@cf/meta/llama-3.1-8b-instruct-fast";
+export const DEFAULT_MODEL = "@cf/meta/llama-3.1-8b-instruct-fp8";
 export const LIMITS = { line: 200, context: 600, mood: 40, rhymes: 30, word: 24, exclude: 40, excludeLen: 200, bodyBytes: 8000 };
 export const MOODS = ["any", "related", "love", "heartbreak", "night", "ocean", "nature", "weather", "city", "party", "money", "fire",
   "journey", "war", "faith", "time", "home", "food", "animals", "body", "music", "freedom", "hopeful", "dark", "nostalgic", "angry", "dreamy"];
