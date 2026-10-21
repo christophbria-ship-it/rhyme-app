@@ -92,7 +92,7 @@ async function padAnalyze(){const seq=++padSeq,text=pad.value;
     if(seq!==padSeq)return;if(!r.ok)throw new Error(d.error);
     padLines.innerHTML=d.lines.map((l,i)=>!l.words.length?'<li class="blank"></li>':`<li data-n="${i+1}"><span class="syl" title="syllables">${l.syllables}</span><span class="let${l.match?' m-'+l.match:''}" style="--c:${LCOL[(l.letter.charCodeAt(0)-65)%LCOL.length]}" title="${l.match?l.match+' rhyme':'new rhyme sound'}">${l.letter}</span><button type="button" class="endw" data-w="${esc(l.end)}">${esc(l.end)}</button></li>`).join('');
     const words=d.lines.reduce((a,l)=>a+l.words.length,0);
-    $('#padStats').innerHTML=d.total_lines?`<span id="scheme">Scheme <b>${esc(d.scheme)}</b></span> · ${d.total_lines} line${d.total_lines==1?'':'s'} · ${words} words · ${d.total_syllables} syllables`:'Your verse analysis will appear here.';
+    $('#padStats').innerHTML=d.total_lines?`<span id="scheme">Scheme <b>${esc(d.scheme)}</b></span> · ${d.total_lines} line${d.total_lines==1?'':'s'} · ${words} words · ${d.total_syllables} syllables · <span id="density" title="Rhyme density: average length (in vowels) of the longest rhyme each word makes with the 15 words before it. Typical pop lyrics ≈ 0.7–0.9; dense rap 1.1+">Rhyme density <b>${d.rhyme_density.toFixed(2)}</b></span>`:'Your verse analysis will appear here.';
   }catch(e){if(seq===padSeq)$('#padStats').innerHTML=`<div class="err" role="alert">Couldn't analyse lyrics: ${esc(e.message)}</div>`}}
 padLines.addEventListener('click',e=>{const b=e.target.closest('.endw');if(!b)return;q.value=b.dataset.w;location.hash='#rhymes';search()});
 $('#padClear').addEventListener('click',()=>{if(!pad.value||confirm('Clear the lyrics pad?')){pad.value='';localStorage.removeItem('rhymer-pad');padAnalyze()}});
@@ -103,60 +103,107 @@ $('#padDownload').addEventListener('click',()=>{const a=document.createElement('
   if(on===null||on==='1'){tToggle.checked=true;tToggle.setAttribute('aria-checked','true');tSel.disabled=tOnly.disabled=false;document.body.classList.toggle('themed',!!tSel.value)}
   showTab(location.hash.slice(1));if(init){q.value=init;search()}})();
 
-// ---------------- related rhymes card ("Related to my word") ----------------
+// ---------------- related rhymes card ("Related to my word") + AI brainstorm ----------------
 const TIERNAME={perfect:'perfect',near:'near',slant:'slant',assonant:'vowel match'};
+const AI_BASE=window.RHYMER_AI_BASE||(window.RHYMER_AI_URL?window.RHYMER_AI_URL.replace(/lines$/,''):'api/ai/');
+const GROUPS=[['perfect','Perfect & near','Same ending sound'],['multi','Multi-syllable','Longer words and multi-syllable matches'],['slant','Slant & vowel','Shared vowel, close consonants'],['phrase','Phrases','Multi-word & compound rhymes — tap to copy']];
+const bsOn=()=>localStorage.getItem('rhymer-bs')!=='0';
+function lsGet(k,maxAge){try{const v=JSON.parse(localStorage.getItem(k));if(v&&Date.now()-v.t<maxAge)return v.d}catch(e){}return null}
+function lsSet(k,d){try{localStorage.setItem(k,JSON.stringify({t:Date.now(),d}))}catch(e){try{Object.keys(localStorage).filter(x=>x.startsWith('rhymer-c:')).slice(0,50).forEach(x=>localStorage.removeItem(x))}catch(_){}}}
+async function aiGet(kind,body,timeout=30000){const key='rhymer-c:'+kind+':'+JSON.stringify(body),hit=lsGet(key,30*864e5);if(hit)return{...hit,cached:true};
+  if(navigator.onLine===false)throw new Error('offline');const ac=new AbortController(),to=setTimeout(()=>ac.abort(),timeout);
+  try{const q=JSON.stringify(body);const r=AI_BASE.startsWith('http')&&q.length<6000?await fetch(AI_BASE+kind+'?q='+encodeURIComponent(q),{signal:ac.signal}):
+      await fetch(AI_BASE+kind,{method:'POST',headers:{'Content-Type':'application/json'},body:q,signal:ac.signal});
+    let d;try{d=await r.json()}catch(e){d={}}if(!r.ok)throw new Error(d.error||('HTTP '+r.status));lsSet(key,d);return d}
+  catch(e){throw e.name==='AbortError'?new Error('timed out'):e}finally{clearTimeout(to)}}
+function chip(x,ai){const t=x.tier,sym=t==='perfect'?'●':t==='near'?'◐':'○';
+  return `<span class="w rel t-${t}${x.conf&&x.conf!=='dict'?' gen':''}${ai?' ai':''}" data-w="${esc(x.word)}" title="${esc(TIERNAME[t]+(x.assoc!=null?' · association '+x.assoc:'')+(x.matched>1?' · '+x.matched+' syllables match':'')+(ai?' · AI brainstorm, verified':''))}">${esc(x.word)}<sup>${ai?'✨':sym}${x.matched>1?'×'+x.matched:''}</sup></span>`}
+function phraseBtn(p,ai){return `<button type="button" class="phrase t-${p.tier}${ai?' ai':''}" data-copy="${esc(p.text)}" title="${esc(TIERNAME[p.tier]+(p.source?' · '+({ai:'lyric bank',wikt:'idiom',cn:'ConceptNet',combo:'word combo'}[p.source]||p.source):'')+(ai?' · AI brainstorm, verified':''))}">${esc(p.text)}${ai?' ✨':''}</button>`}
+function renderRel(slot,d,bs){const g={perfect:[],multi:[],slant:[],phrase:[]},seen=new Set();
+  d.related.forEach(x=>{g[x.group].push(chip(x,false));seen.add(x.word)});d.phrases.forEach(p=>{g.phrase.push(phraseBtn(p,false));seen.add(p.text)});
+  let added=0;if(bs&&bs.items)bs.items.forEach(x=>{if(seen.has(x.text))return;seen.add(x.text);added++;
+    if(x.group==='phrase')g.phrase.unshift(phraseBtn({text:x.text,tier:x.tier},true));else g[x.group].unshift(chip({word:x.text,tier:x.tier,matched:x.matched},true))});
+  const total=Object.values(g).reduce((a,x)=>a+x.length,0);
+  const bsState=!bsOn()?'off':bs===undefined?'loading':bs&&bs.error?'error':bs?'done':'off';
+  slot.innerHTML=`<section class="card relcard" id="relCard" data-bs="${bsState}"><div class="relhead"><h2 class="ptitle">Related to “${esc(d.word)}” <span class="badge b-perfect" id="relTotal">${total}</span></h2>
+    <label class="chk bschk"><input type="checkbox" id="bsToggle"${bsOn()?' checked':''}> ✨ AI brainstorm</label></div>
+    <p class="hint">Rhymes connected to your word's meaning, strongest first · ● perfect ◐ near ○ slant/vowel · ×2 = multi-syllable match${bsState==='done'?` · <span class="bsnote">✨ ${added} more from AI${bs.model?' ('+esc(bs.model.split('/').pop())+')':''}, verified by the rhyme engine</span>`:bsState==='loading'?' · <span class="bsnote"><span class="spinner"></span>AI brainstorming…</span>':bsState==='error'?` · <span class="bsnote">AI brainstorm unavailable (${esc(bs.error)})</span>`:''}</p>
+    ${GROUPS.map(([k,t,desc])=>g[k].length?`<div class="relgroup" data-group="${k}"><h3 class="subh">${t} <span class="cnt">${g[k].length}</span> <small>${desc}</small></h3><div class="words${k==='phrase'?' phrases':''}">${g[k].join('')}</div></div>`:'').join('')}</section>`;
+  slot.querySelector('#bsToggle').addEventListener('change',e=>{localStorage.setItem('rhymer-bs',e.target.checked?'1':'0');loadRelated(d.word)})}
+async function brainstorm(word){
+  const d=await aiGet('brainstorm',{word},40000);
+  const items=[...new Set(['perfect','multi','slant','phrases'].flatMap(k=>Array.isArray(d[k])?d[k]:[]).filter(s=>typeof s==='string'&&s&&s.length<=60))].slice(0,200);
+  const r=await fetch('api/verify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({word,items})});const v=await r.json();if(!r.ok)throw new Error(v.error||r.status);
+  return{items:v.items,model:d.model,proposed:items.length}}
 async function loadRelated(word){const slot=$('#relSlot');if(!slot)return;
   slot.innerHTML='<div class="card relcard"><div class="skel" style="width:60%"></div></div>';
-  try{const r=await fetch('api/related?'+new URLSearchParams({word,limit:'30'}));const d=await r.json();if(!r.ok)throw new Error(d.error||r.status);
+  try{const r=await fetch('api/related?'+new URLSearchParams({word,limit:'300',phrases:'120'}));const d=await r.json();if(!r.ok)throw new Error(d.error||r.status);
     if($('#q').value.trim().toLowerCase()!==d.word||!$('#relSlot'))return;
-    if(!d.in_vocab||!d.related.length){slot.innerHTML=`<div class="card relcard" id="relCard"><h2 class="ptitle">Related to “${esc(d.word)}”</h2><p class="hint">No associations for this word yet — showing plain rhymes below.</p></div>`;return}
-    slot.innerHTML=`<section class="card relcard" id="relCard"><h2 class="ptitle">Related to “${esc(d.word)}” <span class="badge b-perfect">${d.related_total}</span></h2>
-      <p class="hint">Words associated with your word that rhyme or near-rhyme, best first.</p>
-      <div class="words">${d.related.map(x=>`<span class="w rel t-${x.tier}${x.conf!=='dict'?' gen':''}" data-w="${esc(x.word)}" title="${esc(TIERNAME[x.tier]+' · association '+x.assoc)}">${esc(x.word)}<sup>${x.tier==='perfect'?'●':x.tier==='near'?'◐':'○'}</sup></span>`).join('')}</div>
-      ${d.phrases.length?`<h3 class="subh">Phrase ideas <small>tap to copy</small></h3><div class="words">${d.phrases.map(p=>`<button type="button" class="phrase" data-copy="${esc(p.text)}">${esc(p.text)}</button>`).join('')}</div>`:''}</section>`}
+    if(!d.in_vocab||!(d.related.length||d.phrases.length)){slot.innerHTML=`<div class="card relcard" id="relCard"><h2 class="ptitle">Related to “${esc(d.word)}”</h2><p class="hint">No associations for this word yet — showing plain rhymes below.</p></div>`;return}
+    const on=bsOn()&&navigator.onLine!==false;renderRel(slot,d,on?undefined:null);
+    if(on){let bs;try{bs=await brainstorm(d.word)}catch(e){bs={error:e.message}}
+      if($('#q').value.trim().toLowerCase()===d.word&&$('#relSlot')===slot)renderRel(slot,d,bs)}}
   catch(e){slot.innerHTML=`<div class="card relcard"><div class="err" role="alert">Related words unavailable: ${esc(e.message)}</div></div>`}}
 async function copyText(t,btn){try{await navigator.clipboard.writeText(t)}catch(e){const ta=document.createElement('textarea');ta.value=t;document.body.appendChild(ta);ta.select();document.execCommand('copy');ta.remove()}
   if(btn){const o=btn.textContent;btn.classList.add('copied');btn.dataset.label=o;btn.textContent='Copied ✓';setTimeout(()=>{btn.textContent=btn.dataset.label;btn.classList.remove('copied')},1200)}}
 document.addEventListener('click',e=>{const b=e.target.closest('.phrase');if(b){e.stopPropagation();copyText(b.dataset.copy,b)}},true);
 
-// ---------------- AI line writer (Cloudflare Worker) with offline fallback ----------------
-const AI_URL=window.RHYMER_AI_URL||'api/ai/lines';
+// ---------------- AI line writer (Cloudflare Worker): many candidates, scored by the rhyme engine, best 8 shown ----------------
 const MOODS=[['any','Any mood'],['related','Related to the line'],['hopeful','Hopeful'],['dark','Dark'],['nostalgic','Nostalgic'],['angry','Angry'],['dreamy','Dreamy']];
+const RHYME_HINT=w=>/^[a-z]{3,}$/.test(w);
 function fillMoods(){document.querySelectorAll('.aimood').forEach(s=>{const v=s.value;s.innerHTML=MOODS.map(([v,l])=>`<option value="${v}">${l}</option>`).join('')+
   (THEMES.length?'<optgroup label="Themes">'+THEMES.map(t=>`<option value="${esc(t.id)}">${esc(t.label)}</option>`).join('')+'</optgroup>':'');if(v)s.value=v})}
+const scoreCls=s=>s>=80?'hi':s>=60?'mid':'lo';
 function makeAI(box,{getInput,onInsert}){
   box.innerHTML=`<div class="card"><div class="aihead"><h2 class="ptitle">✨ AI lines</h2><label class="chk">Mood <select class="aimood" aria-label="Mood"></select></label></div>
     <p class="hint aisrc"></p><div class="aistatus" aria-live="polite"></div><ol class="ailist"></ol>
     <div class="row"><button type="button" class="ghost aimore" hidden>More lines</button></div></div>`;
   fillMoods();const st=box.querySelector('.aistatus'),list=box.querySelector('.ailist'),more=box.querySelector('.aimore'),mood=box.querySelector('.aimood');
-  let shown=[],cur=null,busy=false;
-  async function hints(line,m){const p=new URLSearchParams({prev:line,line:'',limit:'30'});if(m==='related'||THEMES.some(t=>t.id===m))p.set('theme',m);
-    const r=await fetch('api/line?'+p);const d=await r.json();if(!r.ok)throw new Error(d.error||r.status);return d}
+  let pool=[],shownTexts=new Set(),cur=null,busy=false,seed=0,hintsCache=null,stats={cands:0,model:''};
+  async function hints(line,m){const p=new URLSearchParams({prev:line,line:'',limit:'40'});if(m==='related'||THEMES.some(t=>t.id===m))p.set('theme',m);
+    const r=await fetch('api/line?'+p);const d=await r.json();if(!r.ok)throw new Error(d.error||r.status);
+    // hints: perfect rhymes first (related to the line's meaning, then the most common), near rhymes only to fill up
+    let rel=[];try{const rr=await fetch('api/related?'+new URLSearchParams({word:d.end_word,limit:'120',phrases:'0'}));if(rr.ok){const j=await rr.json();
+      rel=j.related.filter(x=>x.group!=='slant'&&x.freq>=3.8&&x.pos.length&&RHYME_HINT(x.word))}}catch(e){}
+    const H=[],addH=w=>{if(H.length<10&&!H.includes(w)&&w!==d.end_word)H.push(w)};
+    rel.filter(x=>x.tier==='perfect').slice(0,7).forEach(x=>addH(x.word));
+    d.suggestions.perfect.filter(x=>x.freq>=4.2&&RHYME_HINT(x.word)).sort((a,b)=>b.freq-a.freq).slice(0,12).forEach(x=>{if(H.length<8)addH(x.word)});
+    rel.forEach(x=>addH(x.word));d.hintWords=H;
+    d.rhythm=(d.prev.words||[]).map(w=>[...w.stress].map(c=>c==='/'?'DUM':'da').join('-')).join(' ');return d}
   function fallback(msg,h){box.dataset.state='fallback';more.hidden=true;
     const ends=h?['perfect','near'].flatMap(t=>h.suggestions[t]).slice(0,24):[];
     st.innerHTML=`<div class="note">AI unavailable (${esc(msg)}) — showing offline rhyme suggestions instead.</div>`+
       (ends.length?`<div class="words fb">${ends.map(x=>`<button type="button" class="w fbw" data-copy="${esc(x.word)}">${esc(x.word)}<sup>${x.syllables}</sup></button>`).join('')}</div>`:'')}
+  function row(x){const det=[x.multi?`×${x.multi+1} multi`:'',x.internal?`${x.internal} internal`:''].filter(Boolean);
+    return `<li class="ail t-${x.tier}"><span class="sc s-${scoreCls(x.score)}" title="Rhyme & rhythm score: end-rhyme strength, multi-syllable match, internal rhymes, syllable fit, freshness">${x.score}</span><span class="tb t-${x.tier}">${x.tier==='assonant'?'vowel':x.tier}</span>${det.map(t=>`<span class="tb tx">${t}</span>`).join('')}<span class="txt">${esc(x.text)}</span><span class="syl" title="syllables">${x.syllables} syl</span>
+      <button type="button" class="ghost cp" data-copy="${esc(x.text)}" aria-label="Copy line">Copy</button>${onInsert?`<button type="button" class="ghost ins" data-t="${esc(x.text)}">Insert</button>`:''}</li>`}
+  async function rank(line,lines){const rr=await fetch('api/rank_lines',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({line,lines:lines.slice(0,40).map(s=>String(s).slice(0,200)),keep:40})});
+    if(!rr.ok)return lines.map(t=>({text:t,tier:'none',syllables:0,score:0,multi:0,internal:0}));return(await rr.json()).lines}
+  function showNext(){const fresh=pool.filter(x=>!shownTexts.has(x.text)&&x.tier!=='none'&&x.score>=35).slice(0,8);fresh.forEach(x=>shownTexts.add(x.text));
+    list.insertAdjacentHTML('beforeend',fresh.map(row).join(''));return fresh.length}
   async function run(isMore){if(busy)return;const inp=getInput();if(!inp||!inp.line.trim()){box.hidden=false;box.dataset.state='error';st.innerHTML='<div class="err" role="alert">Write a lyric line first.</div>';return}
-    busy=true;box.hidden=false;if(!isMore||!cur||cur.line!==inp.line){shown=[];list.innerHTML=''}cur=inp;
-    box.querySelector('.aisrc').innerHTML=`Next lines for “${esc(inp.line.trim())}”`;box.dataset.state='loading';more.hidden=true;
-    st.innerHTML='<span class="spinner"></span>Writing lines…';let h=null;
-    try{h=await hints(inp.line,mood.value)}catch(e){}
-    try{if(navigator.onLine===false)throw new Error('offline');
-      const body={line:inp.line.trim().slice(0,200),mood:mood.value,count:6,exclude:shown.slice(-40)};
+    busy=true;box.hidden=false;const line=inp.line.trim().slice(0,200);
+    if(!isMore||!cur||cur.line!==inp.line||cur.mood!==mood.value){pool=[];shownTexts=new Set();list.innerHTML='';seed=0;hintsCache=null;stats={cands:0,model:''}}cur={...inp,mood:mood.value};
+    box.querySelector('.aisrc').innerHTML=`Next lines for “${esc(line)}”`;box.dataset.state='loading';more.hidden=true;
+    if(isMore&&showNext()>=8){box.dataset.state='done';status();busy=false;return}
+    st.innerHTML=`<span class="spinner"></span>Writing ${isMore?'more ':''}lines and checking every rhyme…`;let h=hintsCache;
+    try{if(!h)h=hintsCache=await hints(line,mood.value)}catch(e){}
+    try{const body={line,mood:mood.value,count:24};if(seed)body.seed=seed;if(pool.length)body.exclude=pool.map(x=>x.text).slice(-60);
       if(h){body.syllables=Math.max(1,Math.min(40,h.target_syllables||1));if(/^[a-z][a-z'\-]{0,23}$/.test(h.end_word))body.end_word=h.end_word;
-        body.rhymes=['perfect','near'].flatMap(t=>h.suggestions[t]).map(x=>x.word).filter(w=>/^[a-z][a-z'\-]{0,23}$/.test(w)).slice(0,20)}
+        if(h.hintWords.length)body.rhymes=h.hintWords;if(h.rhythm&&/^[A-Za-z \-]{1,160}$/.test(h.rhythm))body.rhythm=h.rhythm;
+        if(h.echo&&h.echo.words&&h.echo.words.length)body.echo={word:h.echo.word,words:h.echo.words.slice(0,12)}}
       if(inp.context)body.context=inp.context.slice(-600);
-      const ac=new AbortController(),to=setTimeout(()=>ac.abort(),25000);
-      const r=await fetch(AI_URL,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal:ac.signal});clearTimeout(to);
-      let d;try{d=await r.json()}catch(e){d={}}if(!r.ok)throw new Error(d.error||('HTTP '+r.status));
+      const d=await aiGet('lines',body,45000);seed++;
       if(!Array.isArray(d.lines)||!d.lines.length)throw new Error('no lines returned');
-      const rr=await fetch('api/rank_lines',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({line:inp.line.trim().slice(0,200),lines:d.lines.slice(0,20).map(s=>String(s).slice(0,200))})});
-      const ranked=rr.ok?(await rr.json()).lines:d.lines.map(t=>({text:t,tier:'none',syllables:0}));
-      shown.push(...ranked.map(x=>x.text));
-      list.insertAdjacentHTML('beforeend',ranked.map(x=>`<li class="ail t-${x.tier}"><span class="tb t-${x.tier}">${x.tier==='assonant'?'vowel':x.tier}</span><span class="txt">${esc(x.text)}</span><span class="syl" title="syllables">${x.syllables}</span>
-        <button type="button" class="ghost cp" data-copy="${esc(x.text)}" aria-label="Copy line">Copy</button>${onInsert?`<button type="button" class="ghost ins" data-t="${esc(x.text)}">Insert</button>`:''}</li>`).join(''));
-      box.dataset.state='done';st.innerHTML=`<span class="meta">${list.children.length} lines · rhyming lines first${d.model?' · '+esc(d.model.split('/').pop()):''}</span>`;more.hidden=false}
-    catch(e){fallback(e.name==='AbortError'?'timed out':e.message,h)}finally{busy=false}}
+      stats.cands+=d.lines.length;stats.model=d.model||stats.model;
+      const known=new Set(pool.map(x=>x.text.toLowerCase()));const add=d.lines.filter(t=>!known.has(String(t).toLowerCase()));
+      const ranked=await rank(line,[...pool.filter(x=>!shownTexts.has(x.text)).map(x=>x.text),...add].slice(0,40));
+      pool=[...pool.filter(x=>shownTexts.has(x.text)),...ranked];
+      const n=showNext();if(!n&&!list.children.length)throw new Error('no strong rhymes this time — try again');
+      box.dataset.state='done';status()}
+    catch(e){if(list.children.length){box.dataset.state='done';status(' · couldn’t get more: '+e.message)}else fallback(e.message,h)}finally{busy=false}}
+  function status(extra=''){const s=[...list.querySelectorAll('.sc')].map(x=>+x.textContent),avg=s.length?Math.round(s.reduce((a,b)=>a+b,0)/s.length):0;
+    st.innerHTML=`<span class="meta">Best ${list.children.length} of ${stats.cands} AI candidates · scored by the rhyme engine (avg ${avg}/100)${stats.model?' · '+esc(stats.model.split('/').pop()):''}${esc(extra)}</span>`;more.hidden=false}
   more.addEventListener('click',()=>run(true));mood.addEventListener('change',()=>{if(cur)run(false)});
   box.addEventListener('click',e=>{const c=e.target.closest('.cp,.fbw');if(c)copyText(c.dataset.copy,c.classList.contains('cp')?c:null);const i=e.target.closest('.ins');if(i&&onInsert)onInsert(i.dataset.t)});
   return{run}}

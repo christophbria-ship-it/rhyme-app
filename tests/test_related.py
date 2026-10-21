@@ -1,33 +1,49 @@
-"""Related rhymes (GloVe association x rhyme quality), phrases, and the AI-line post-check ranking."""
-import pytest
+"""Related rhymes v2 (GloVe+ConceptNet association x multi-syllable rhyme quality), phrases, brainstorm verify,
+AI-line ranking, rhyme density, echo words."""
+import os, pytest
 
 def rel(engine, w, **kw): return engine.related(w, limit=1000, **kw)
 
-def test_snow_related(engine):
-    r = rel(engine, "snow"); words = [x["word"] for x in r["related"]]
-    assert r["in_vocab"] and "cold" in words
-    assert {"blow", "blows", "below", "glow", "low", "flow"} & set(words[:20]), words[:20]
-    assert {"frozen", "cold", "colder"} & set(words)
+def test_snow_related_plentiful(engine):
+    r = engine.related("snow"); words = [x["word"] for x in r["related"]]; phrases = [p["text"] for p in r["phrases"]]
+    assert r["in_vocab"] and len(words) >= 100, len(words)                       # spec: >= 40; target 100-300
+    assert len(words) + len(phrases) >= 150
+    hits = {"cold", "glow", "below", "frozen", "let it go"} & (set(words) | set(phrases))
+    assert len(hits) >= 4, hits
+    assert {"blow", "below", "glow", "low", "flow"} & set(words[:20]), words[:20]
+    assert any(p.endswith(("go", "glow", "flow", "blow", "ago")) and len(p.split()) >= 3 for p in phrases), phrases[:20]
 
-def test_night_related(engine):
-    words = [x["word"] for x in rel(engine, "night")["related"]]
-    assert {"light", "bright", "fight", "sight"} <= set(words[:30]), words[:30]
+@pytest.mark.parametrize("w,must", [("night", {"light", "bright", "fight", "sight"}), ("heart", {"apart", "start", "part"}), ("love", {"above"}), ("rain", {"pain"})])
+def test_common_words_plentiful(engine, w, must):
+    r = engine.related(w); words = [x["word"] for x in r["related"]]
+    assert len(words) >= 100 and len(r["phrases"]) >= 20, (len(words), len(r["phrases"]))
+    assert must <= set(words[:60]), words[:60]
 
-def test_related_ranking_and_tiers(engine):
-    r = rel(engine, "snow")["related"]
-    sc = [x["score"] for x in r]; assert sc == sorted(sc, reverse=True)
-    q = {"perfect": 1.0, "near": 0.85, "slant": 0.7, "assonant": 0.5}
-    for x in r: assert abs(x["score"] - x["assoc"] * q[x["tier"]]) < 0.002 and x["tier"] in q
-    assert all(x["word"] not in ("so", "though", "snows", "snowy") for x in r)
-    perfect = {x["word"] for x in r if x["tier"] == "perfect"}; assert {"below", "low", "slow"} <= perfect
+def test_groups_and_fields(engine):
+    r = engine.related("snow")
+    g = {x["group"] for x in r["related"]}; assert g <= {"perfect", "multi", "slant"} and len(g) == 3
+    assert set(r["groups"]) >= {"perfect", "multi", "slant"}
+    multi = [x for x in r["related"] if x["group"] == "multi"]; assert multi and all(x["syllables"] >= 2 for x in multi)
+    for x in r["related"]:
+        assert x["tier"] in ("perfect", "near", "slant", "assonant") and 0 < x["score"] and x["matched"] >= 0
+        if x["group"] == "perfect": assert x["tier"] in ("perfect", "near")
+    sc = [x["score"] for x in r["related"]]; assert sc == sorted(sc, reverse=True)
+    assert all(x["word"] not in ("so", "though", "snows", "snowy", "thereof") for x in r["related"])
+    perfect = {x["word"] for x in r["related"] if x["tier"] == "perfect"}; assert {"below", "low", "slow"} <= perfect
+
+def test_multisyllable_matches(engine):
+    r = rel(engine, "frozen"); words = {x["word"]: x for x in r["related"]}
+    assert "chosen" in words and words["chosen"]["tier"] == "perfect" and words["chosen"]["matched"] >= 2
 
 def test_related_phrases(engine):
     r = engine.related("snow")
-    assert 3 <= len(r["phrases"]) <= 12
-    ends = {x["word"] for x in rel(engine, "snow")["related"]}
+    assert 20 <= len(r["phrases"]) <= 80
     for p in r["phrases"]:
-        n = len(p["text"].split()); assert 2 <= n <= 3 and p["text"].split()[-1] == p["end"] and p["end"] in ends
+        assert 2 <= len(p["text"].replace("-", " ").split()) <= 6 and p["tier"] in ("perfect", "near", "slant", "assonant")
     sc = [p["score"] for p in r["phrases"]]; assert sc == sorted(sc, reverse=True)
+    ends = {}
+    for p in r["phrases"]: ends[p["text"].split()[-1]] = ends.get(p["text"].split()[-1], 0) + 1
+    assert max(ends.values()) <= 4
 
 def test_related_oov_and_errors(engine):
     r = engine.related("glorbify"); assert not r["in_vocab"] and r["related"] == [] and r["phrases"] == []
@@ -45,18 +61,53 @@ def test_related_min_freq(engine):
     assert r["related"] and all(x["freq"] >= 4.5 for x in r["related"])
 
 def test_assoc_data_size():
-    import os
     d = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "assoc")
-    assert sum(os.path.getsize(os.path.join(d, f)) for f in os.listdir(d)) < 8_000_000
+    files = os.listdir(d); assert sum(os.path.getsize(os.path.join(d, f)) for f in files) < 16_000_000
+    assert max(os.path.getsize(os.path.join(d, f)) for f in files) < 2_500_000   # lazy-loaded per stressed vowel
+
+def test_verify_brainstorm(engine):
+    v = engine.verify("snow", ["glow", "let it go", "below zero", "white glow", "cold", "banana", "snow", "<b>", "overflow"])
+    by = {x["text"]: x for x in v["items"]}
+    assert by["glow"]["group"] == "perfect" and by["let it go"]["group"] == "phrase" and by["let it go"]["tier"] == "perfect"
+    assert by["overflow"]["group"] == "multi" and by["white glow"]["tier"] == "perfect"
+    assert "banana" not in by and "snow" not in by and "<b>" not in by and "cold" in by and by["cold"]["tier"] in ("slant", "assonant")
+    with pytest.raises(ValueError): engine.verify("snow", "nope")
+    with pytest.raises(ValueError): engine.verify("snow", ["x"] * 201)
 
 def test_rank_lines(engine):
     r = engine.rank_lines("walking through the falling snow", ["The city sleeps in frozen light", "Feeling the winter in my bones",
-        "walking through the falling snow", "Our footprints fading as we go", "The world is hushed and white below", ""])
-    tiers = [x["tier"] for x in r["lines"]]
-    assert tiers == ["perfect", "perfect", "assonant", "none", "none", "repeat"], tiers
-    assert r["lines"][0]["text"] == "The world is hushed and white below" and r["end"] == "snow" and r["syllables"] == 7
+        "walking through the falling snow", "Our footprints fading as we go", "The world is hushed and white below", "",
+        "I miss you so though", "calling through the crawling snow"])
+    by = {x["text"]: x for x in r["lines"]}
+    assert by["The world is hushed and white below"]["tier"] == "perfect" and by["walking through the falling snow"]["tier"] == "repeat"
+    assert by["I miss you so though"]["filler"] and by["I miss you so though"]["score"] < 40
+    assert by["The city sleeps in frozen light"]["tier"] == "none" and not by["The city sleeps in frozen light"]["keep"]
+    assert r["end"] == "snow" and r["syllables"] == 7
+    sc = [x["score"] for x in r["lines"]]; assert sc == sorted(sc, reverse=True) and all(0 <= s <= 100 for s in sc)
+    assert r["lines"][0]["tier"] == "perfect" and r["lines"][0]["keep"]
     assert engine.rank_lines("I love the night", ["we dance till the morning light"])["lines"][0]["tier"] == "perfect"
 
-@pytest.mark.parametrize("args", [("", ["a"]), ("snow", "nope"), ("snow", ["x"] * 21), ("snow", ["x" * 201]), ("x" * 201, ["a"]), ("!!!", ["a"])])
+def test_rank_multi_and_internal_beats_plain(engine):
+    r = engine.rank_lines("walking through the falling snow", ["the river by the road below", "the stars are calling, crawling slow"])
+    a, b = sorted(r["lines"], key=lambda x: x["text"])
+    assert b["text"].startswith("the stars") and b["internal"] >= 1 and b["score"] > a["score"]
+    c = engine.rank_lines("my heart is frozen", ["the path I've chosen", "we drank a soda"])["lines"]
+    assert c[0]["text"].startswith("the path") and c[0]["tier"] == "perfect"
+
+@pytest.mark.parametrize("args", [("", ["a"]), ("snow", "nope"), ("snow", ["x"] * 41), ("snow", ["x" * 201]), ("x" * 201, ["a"]), ("!!!", ["a"])])
 def test_rank_lines_validation(engine, args):
     with pytest.raises(ValueError): engine.rank_lines(*args)
+
+def test_rhyme_density(engine):
+    plain = engine.analyze("I went to the store today\nthe weather was fine and warm\nwe ate some bread for lunch")["rhyme_density"]
+    dense = engine.analyze("I'm falling, calling, crawling through the night\nstalling, sprawling, balling with the light")["rhyme_density"]
+    assert 0 <= plain < dense and dense > 1.0, (plain, dense)
+    assert engine.analyze("")["rhyme_density"] == 0
+
+def test_echo_words(engine):
+    e = engine.line_help("walking through the falling snow", "")["echo"]
+    assert e["word"] == "falling" and {"calling", "crawling"} <= set(e["words"])
+
+def test_rank_parrot_penalty(engine):
+    r = {x["text"]: x for x in engine.rank_lines("walking through the falling snow", ["hours pass by like falling dough", "hours pass by like drifting dough"])["lines"]}
+    assert r["hours pass by like falling dough"]["multi"] == 0 and r["hours pass by like falling dough"]["score"] < r["hours pass by like drifting dough"]["score"]

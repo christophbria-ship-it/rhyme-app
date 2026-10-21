@@ -22,30 +22,32 @@ class H(BaseHTTPRequestHandler):
         self.send_response(code); self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(b))); self.end_headers(); self.wfile.write(b)
     def do_POST(self):
-        """POST /api/analyze {"text"}, /api/rank_lines {"line", "lines"}, /api/ai/lines (proxy to the AI worker)."""
+        """POST /api/analyze {"text"}, /api/rank_lines {"line", "lines"}, /api/verify {"word", "items"},
+        /api/ai/lines and /api/ai/brainstorm (proxies to the AI worker)."""
         try:
             path = urlparse(self.path).path
-            if path not in ("/api/analyze", "/api/rank_lines", "/api/ai/lines"): return self.send(404, {"error": "not found"})
+            if path not in ("/api/analyze", "/api/rank_lines", "/api/verify", "/api/ai/lines", "/api/ai/brainstorm"): return self.send(404, {"error": "not found"})
             n = int(self.headers.get("Content-Length", 0))
             if n > 100000: return self.send(413, {"error": "body too large"})
             raw = self.rfile.read(n) or b"{}"
-            if path == "/api/ai/lines": return self.ai_proxy(raw)
+            if path.startswith("/api/ai/"): return self.ai_proxy(raw, path.rsplit("/", 1)[1])
             body = json.loads(raw)
             if not isinstance(body, dict): return self.send(400, {"error": "body must be an object"})
             if path == "/api/rank_lines": return self.send(200, ENGINE.rank_lines(body.get("line"), body.get("lines")))
+            if path == "/api/verify": return self.send(200, ENGINE.verify(body.get("word") or "", body.get("items")))
             if not isinstance(body.get("text"), str): return self.send(400, {"error": "missing 'text'"})
             return self.send(200, ENGINE.analyze(body["text"]))
         except ValueError as e:
             self.send(400, {"error": str(e)})
         except Exception:
             self.send(500, {"error": "internal error"})
-    def ai_proxy(self, raw):
+    def ai_proxy(self, raw, kind="lines"):
         """Server version: forward to the Cloudflare worker (RHYMER_AI_URL), authenticating with RHYMER_AI_KEY server-side."""
         import urllib.request, urllib.error
         base = os.environ.get("RHYMER_AI_URL", "").rstrip("/")
         if not base: return self.send(503, {"error": "AI line writer is not configured on this server"})
         if len(raw) > 8000: return self.send(413, {"error": "request too large"})
-        req = urllib.request.Request(base + "/lines", data=raw, method="POST",
+        req = urllib.request.Request(base + "/" + kind, data=raw, method="POST",
                                      headers={"Content-Type": "application/json", "X-Rhymer-Key": os.environ.get("RHYMER_AI_KEY", ""),
                                               "CF-Connecting-IP": self.client_address[0]})
         try:
@@ -78,8 +80,9 @@ class H(BaseHTTPRequestHandler):
                 return self.send(200, {"themes": [{"id": k, "label": v, "size": len(ENGINE.themes[k])} for k, v in ENGINE.theme_labels.items()]})
             if u.path == "/api/related":
                 if not q.get("word", "").strip(): return self.send(400, {"error": "missing 'word' parameter"})
-                return self.send(200, ENGINE.related(q["word"], limit=min(int(q.get("limit", 40)), 500),
-                                                     min_freq=float(q["min_freq"]) if q.get("min_freq") else None))
+                return self.send(200, ENGINE.related(q["word"], limit=min(int(q.get("limit", 300)), 1000),
+                                                     min_freq=float(q["min_freq"]) if q.get("min_freq") else None,
+                                                     phrases=min(int(q.get("phrases", 80)), 300)))
             if u.path == "/api/analyze":
                 if "text" not in q: return self.send(400, {"error": "missing 'text' parameter"})
                 return self.send(200, ENGINE.analyze(q["text"]))

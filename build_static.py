@@ -10,10 +10,13 @@ for i in range(SHARDS):
     json.dump(rows[i*n:(i+1)*n], open(os.path.join(OUT, "data", f"words-{i}.json"), "w"), separators=(",", ":"))
 shutil.copy(os.path.join(ROOT, "data", "themes.json"), os.path.join(OUT, "data", "themes.json"))
 # association shards (lazy-loaded by the browser only in "Related to my word" mode)
-from engine import STOPWORDS
+import engine as E
 shutil.copytree(os.path.join(ROOT, "data", "assoc"), os.path.join(OUT, "data", "assoc"))
-av = json.load(open(os.path.join(ROOT, "data", "assoc", "vocab.json"))); av["stopwords"] = sorted(STOPWORDS)
-json.dump(av, open(os.path.join(OUT, "data", "assoc", "vocab.json"), "w"), separators=(",", ":"))
+# word lists + tuning constants shared with engine.py, so the in-browser port can't drift from the Python engine
+json.dump({"stop": sorted(E.STOPWORDS), "rel_stop": sorted(E.REL_STOP), "func": sorted(E.FUNC), "particles": sorted(E.PARTICLES),
+           "filler": sorted(E.FILLER), "cliches": E.CLICHES,
+           "params": {"A_MIN": E.A_MIN, "A_MIN_RHYME": E.A_MIN_RHYME, "P_MIN": E.P_MIN, "LYRIC_BOOST": E.LYRIC_BOOST}},
+          open(os.path.join(OUT, "data", "lex.json"), "w"), separators=(",", ":"))
 json.dump({"shards": SHARDS, "words": len(rows)}, open(os.path.join(OUT, "data", "manifest.json"), "w"))
 for f in ("app.css", "app.js", "manifest.webmanifest"): shutil.copy(os.path.join(ROOT, "static", f), OUT)
 shutil.copytree(os.path.join(ROOT, "static", "icons"), os.path.join(OUT, "icons"))
@@ -30,7 +33,8 @@ html = html.replace('<script src="/app.js"></script>', '<script src="/app.js"></
 html = html.replace('href="/app.css"', 'href="app.css"')
 # AI worker endpoint for the static site (no secrets: the worker holds the Workers AI binding)
 ai_url = os.environ.get("RHYMER_AI_URL") or (open(os.path.join(ROOT, "worker", "URL")).read().strip() if os.path.exists(os.path.join(ROOT, "worker", "URL")) else "")
-open(os.path.join(OUT, "config.js"), "w").write(f"window.RHYMER_AI_URL={json.dumps(ai_url.rstrip('/') + '/lines' if ai_url else '')};\n")
+ai_base = ai_url.rstrip("/") + "/" if ai_url else ""
+open(os.path.join(OUT, "config.js"), "w").write(f"window.RHYMER_AI_BASE={json.dumps(ai_base)};window.RHYMER_AI_URL={json.dumps(ai_base + 'lines' if ai_base else '')};\n")
 html = html.replace('<script src="api-shim.js"></script>', '<script src="config.js"></script><script src="api-shim.js"></script>').replace('<script src="/app.js"></script>', '<script src="config.js"></script><script src="api-shim.js"></script><script src="app.js"></script>')
 open(os.path.join(OUT, "index.html"), "w").write(html)
 open(os.path.join(OUT, ".nojekyll"), "w").close()
@@ -38,8 +42,8 @@ open(os.path.join(OUT, ".nojekyll"), "w").close()
 import hashlib
 allfiles = sorted(os.path.relpath(os.path.join(dp, f), OUT).replace(os.sep, "/") for dp, _, fs in os.walk(OUT) for f in fs if f not in (".nojekyll",))
 # association shards are fetched lazily and cached at runtime by the service worker (not precached)
-assets = ["./"] + [a for a in allfiles if not a.startswith("data/assoc/shard-")]
-h = hashlib.sha256(b"rhymer-v5")
+assets = ["./"] + [a for a in allfiles if not (a.startswith("data/assoc/") and a != "data/assoc/vocab.json")]
+h = hashlib.sha256(b"rhymer-v6")
 for a in allfiles: h.update(a.encode()); h.update(open(os.path.join(OUT, a), "rb").read())
 sw = open(os.path.join(ROOT, "static", "sw.js")).read().replace("__VERSION__", h.hexdigest()[:12]).replace("__ASSETS__", json.dumps(assets))
 open(os.path.join(OUT, "sw.js"), "w").write(sw)

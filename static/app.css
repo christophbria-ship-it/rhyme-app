@@ -128,3 +128,18 @@ button.aibtn:hover{background:linear-gradient(135deg,#A4652B,#5F2F15)}
 .tb{font:600 .66rem Inter,system-ui,sans-serif;text-transform:uppercase;letter-spacing:.05em;padding:3px 7px;border-radius:6px;background:#EFE4D6;color:var(--muted);flex:none}
 .tb.t-perfect{background:var(--copper);color:#FFF8EF}.tb.t-near{background:#94562B;color:#FFF8EF}.tb.t-slant{background:#8A6A4F;color:#FFF8EF}
 @media (max-width:600px){.ail{flex-wrap:wrap}.ail .txt{flex-basis:100%;order:2}.ail .tb{order:1}.ail .syl{order:1;margin-left:auto}.ail button{order:3}.padtools{flex-wrap:wrap}}
+/* v6: related groups, AI brainstorm, line scores, rhyme density */
+.relhead{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.bschk{font-size:.88rem;color:var(--muted);gap:6px}
+.relgroup{margin-top:4px}.relgroup .cnt{display:inline-block;min-width:1.6em;padding:1px 7px;border-radius:999px;background:#F3E6D6;color:var(--copper);font-size:.72rem;text-align:center;margin-left:4px}
+.relgroup .words{max-height:none}
+.w.rel.ai{border-style:dashed;border-color:#C9915E;background:#FFFAF2}
+.w.rel sup{margin-left:2px}
+.phrases{gap:6px}.phrase.ai{border-color:#C9915E;background:#FFFAF2}
+.phrase.t-slant,.phrase.t-assonant{border-color:#D9C2A6;color:#8A5A35}
+.bsnote{color:var(--copper);font-weight:500}
+.sc{flex:none;display:inline-grid;place-items:center;min-width:2.3em;height:2.3em;border-radius:999px;font:700 .82rem Inter,system-ui,sans-serif;font-variant-numeric:tabular-nums}
+.sc.s-hi{background:#2F6B5E;color:#fff}.sc.s-mid{background:#B87333;color:#fff}.sc.s-lo{background:#EFE4D6;color:var(--muted)}
+.tb.tx{background:#F6EDE1;color:#7A3E1D;text-transform:none;letter-spacing:0}
+#density b{color:var(--copper)}
+@media (max-width:600px){.ail .sc{order:0}.ail .tb.tx{order:1}}

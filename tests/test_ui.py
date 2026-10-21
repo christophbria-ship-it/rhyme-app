@@ -135,37 +135,66 @@ import json as _json
 AI_LINES = ["The world is hushed and white below", "I feel the bitter winter wind blow", "The city sleeps in frozen light",
             "Our footprints fading as we go", "Feeling the winter in my bones", "walking through the falling snow"]
 
-def mock_ai(page, lines=AI_LINES, status=200, seen=None):
+BRAINSTORM = {"perfect": ["glow", "tableau", "zzqx"], "multi": ["let it go", "overflow"], "slant": ["cold"], "phrases": ["white glow", "below zero", "banana bread"]}
+
+def _ai_body(route):
+    from urllib.parse import urlparse, parse_qs
+    q = parse_qs(urlparse(route.request.url).query).get("q")
+    return _json.loads(q[0] if q else (route.request.post_data or "{}"))
+
+def mock_ai(page, lines=AI_LINES, status=200, seen=None, bs=BRAINSTORM):
     def h(route):
-        body = _json.loads(route.request.post_data or "{}")
+        body = _ai_body(route)
+        if "brainstorm" in route.request.url:
+            if bs is None: return route.fulfill(status=503, content_type="application/json", body='{"error":"not configured"}')
+            return route.fulfill(status=200, content_type="application/json", body=_json.dumps({**bs, "model": "@cf/meta/mock"}))
         if seen is not None: seen.append(body)
         if status != 200: return route.fulfill(status=status, content_type="application/json", body=_json.dumps({"error": "AI service error"}))
         out = [l for l in lines if l not in body.get("exclude", [])] or ["A brand new line that ends in glow"]
-        route.fulfill(status=200, content_type="application/json", body=_json.dumps({"lines": out[:6], "model": "@cf/meta/mock", "ms": 5}))
-    page.route("**/api/ai/lines", h)
+        route.fulfill(status=200, content_type="application/json", body=_json.dumps({"lines": out[:30], "model": "@cf/meta/mock", "ms": 5}))
+    page.route("**/api/ai/**", h)
 
 def test_related_card(page, base_url):
+    mock_ai(page)
     page.goto(base_url + "/?w=snow"); expect(page.locator("#relCard")).to_be_visible()
+    expect(page.locator("#relCard")).to_have_attribute("data-bs", "done")
     rel = page.locator("#relCard .w.rel").evaluate_all("e => e.map(x => x.dataset.w)")
-    assert "cold" in rel and {"blow", "below", "low", "glow"} & set(rel), rel
+    assert len(rel) >= 100 and "cold" in rel and {"blow", "below", "low", "glow"} & set(rel), len(rel)
+    groups = page.locator("#relCard .relgroup").evaluate_all("e => e.map(x => x.dataset.group)")
+    assert groups == ["perfect", "multi", "slant", "phrase"], groups
+    ai = page.locator("#relCard .ai").all_inner_texts(); joined = " ".join(ai)
+    assert "tableau" in joined and "banana" not in joined and "zzqx" not in joined, ai
+    expect(page.locator("#relCard .bsnote")).to_contain_text("more from AI")
     expect(page.locator("#relCard .phrase").first).to_be_visible()
     page.wait_for_timeout(350); shot(page, "related")
     ph = page.locator("#relCard .phrase").first; ph.click(); expect(ph).to_have_text("Copied ✓")
-    page.locator('#relCard .w.rel[data-w="cold"]').click(); expect(page.locator("#q")).to_have_value("cold")
+    page.uncheck("#bsToggle"); expect(page.locator("#relCard")).to_have_attribute("data-bs", "off")
+    assert page.evaluate("localStorage.getItem('rhymer-bs')") == "0"; expect(page.locator("#relCard .ai")).to_have_count(0)
+    page.check("#bsToggle"); expect(page.locator("#relCard")).to_have_attribute("data-bs", "done")
+    page.locator('#relCard .w.rel[data-w="cold"]').first.click(); expect(page.locator("#q")).to_have_value("cold")
+
+def test_related_brainstorm_unavailable(page, base_url):
+    mock_ai(page, bs=None)
+    page.goto(base_url + "/?w=night"); expect(page.locator("#relCard")).to_have_attribute("data-bs", "error")
+    assert page.locator("#relCard .w.rel").count() >= 100
 
 def test_ai_line_writer(page, base_url):
     seen = []; mock_ai(page, seen=seen)
     page.goto(base_url + "/#line"); page.click("#aiGo"); expect(page.locator("#aiLine .err")).to_contain_text("Write a lyric line")
     page.fill("#prevLine", "walking through the falling snow"); page.select_option("#aiLine .aimood", "love"); page.click("#aiGo")
     expect(page.locator("#aiLine")).to_have_attribute("data-state", "done")
-    tiers = [t.lower() for t in page.locator("#aiLine .ail .tb").all_inner_texts()]
-    assert tiers[:3] == ["perfect"] * 3 and tiers[-1] == "repeat", tiers
-    b = seen[0]; assert b["line"] == "walking through the falling snow" and b["mood"] == "love" and b["end_word"] == "snow"
-    assert b["syllables"] == 7 and "glow" in b["rhymes"] and b["exclude"] == []
+    tiers = [t.lower() for t in page.locator("#aiLine .ail .tb:not(.tx)").all_inner_texts()]
+    assert tiers[:3] == ["perfect"] * 3 and "repeat" not in tiers and "none" not in tiers, tiers
+    scores = [int(t) for t in page.locator("#aiLine .ail .sc").all_inner_texts()]; assert scores == sorted(scores, reverse=True) and scores[0] >= 60
+    texts = page.locator("#aiLine .ail .txt").all_inner_texts(); assert "walking through the falling snow" not in texts and "The city sleeps in frozen light" not in texts
+    b = seen[0]; assert b["line"] == "walking through the falling snow" and b["mood"] == "love" and b["end_word"] == "snow" and b["count"] == 24
+    assert b["syllables"] == 7 and "glow" in b["rhymes"] and "exclude" not in b and "calling" in b["echo"]["words"] and "DUM" in b["rhythm"]
+    expect(page.locator("#aiLine .aistatus")).to_contain_text("AI candidates")
     page.wait_for_timeout(350); shot(page, "ai-lines")
     page.locator("#aiLine .cp").first.click(); expect(page.locator("#aiLine .cp").first).to_have_text("Copied ✓")
-    page.click("#aiLine .aimore"); expect(page.locator("#aiLine .ail")).to_have_count(7)
-    assert len(seen) == 2 and len(seen[1]["exclude"]) == 6
+    n = page.locator("#aiLine .ail").count()
+    page.click("#aiLine .aimore"); expect(page.locator("#aiLine .ail")).to_have_count(n + 1)
+    assert len(seen) == 2 and len(seen[1]["exclude"]) == 6 and seen[1]["seed"] == 1
 
 def test_ai_fallback(page, base_url):
     mock_ai(page, status=502)
@@ -173,7 +202,7 @@ def test_ai_fallback(page, base_url):
     expect(page.locator("#aiLine")).to_have_attribute("data-state", "fallback")
     expect(page.locator("#aiLine .note")).to_contain_text("AI unavailable"); expect(page.locator("#aiLine .fbw").first).to_be_visible()
     page.wait_for_timeout(300); shot(page, "ai-fallback")
-    page.unroute("**/api/ai/lines"); page.context.set_offline(True)
+    page.unroute("**/api/ai/**"); page.context.set_offline(True)
     page.click("#aiGo"); expect(page.locator("#aiLine .note")).to_contain_text("offline"); page.context.set_offline(False)
 
 def test_ai_lyrics_pad(page, base_url):
@@ -183,5 +212,5 @@ def test_ai_lyrics_pad(page, base_url):
     assert seen[0]["line"] == "walking through the falling snow" and seen[0]["context"] == "Cold wind across the frozen lake"
     page.locator("#aiPad .ins").first.click()
     expect(page.locator("#pad")).to_have_value("Cold wind across the frozen lake\nwalking through the falling snow\nThe world is hushed and white below")
-    expect(page.locator("#scheme")).to_contain_text("ABB")
+    expect(page.locator("#scheme")).to_contain_text("ABB"); expect(page.locator("#density")).to_contain_text("Rhyme density")
     page.wait_for_timeout(300); shot(page, "ai-pad")

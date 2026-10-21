@@ -150,36 +150,50 @@ def test_static_songwriting_ui_offline(browser, site_url):
 
 def test_related_and_rank_parity(browser, site_url, engine):
     pg = browser.new_page(); pg.goto(site_url); pg.evaluate("window.RHYME_READY")
-    for w in ["snow", "night", "love", "heart", "orange", "glorbify", "rain", "city", "fire"]:
-        js = pg.evaluate("async w => (await (await fetch('api/related?limit=500&word=' + w)).json())", w)
-        py = engine.related(w, limit=500)
+    for w in ["snow", "night", "love", "heart", "orange", "glorbify", "rain", "city", "fire", "frozen", "money"]:
+        js = pg.evaluate("async w => (await (await fetch('api/related?limit=1000&phrases=300&word=' + w)).json())", w)
+        py = engine.related(w, limit=1000, phrases=300)
         assert [x["word"] for x in js["related"]] == [x["word"] for x in py["related"]], w
-        assert [x["tier"] for x in js["related"]] == [x["tier"] for x in py["related"]]
+        assert [(x["tier"], x["group"], x["matched"]) for x in js["related"]] == [(x["tier"], x["group"], x["matched"]) for x in py["related"]]
         assert all(abs(a["score"] - b["score"]) < 1e-3 for a, b in zip(js["related"], py["related"]))
-        assert [p["text"] for p in js["phrases"]] == [p["text"] for p in py["phrases"]], w
+        assert [(p["text"], p["tier"], p["source"]) for p in js["phrases"]] == [(p["text"], p["tier"], p["source"]) for p in py["phrases"]], w
+        assert js["groups"] == py["groups"] and js["phrase_total"] == py["phrase_total"]
+    items = ["glow", "below zero", "let it go", "frozen", "cold", "banana", "white glow", "overflow", "snow", "go-getter"]
+    js = pg.evaluate("async a => (await (await fetch('api/verify', {method:'POST', body: JSON.stringify(a)})).json())", {"word": "snow", "items": items})
+    assert js == engine.verify("snow", items)
     js = pg.evaluate("async () => (await (await fetch('api/rhymes?word=snow&theme=related&limit=5000')).json())")
     py = engine.rhymes("snow", theme="related", limit=5000)
     for t in ("perfect", "near", "slant"): assert [(x["word"], x["themed"]) for x in js[t]] == [(x["word"], x["themed"]) for x in py[t]]
-    lines = ["The city sleeps in frozen light", "Feeling the winter in my bones", "walking through the falling snow", "Our footprints fading as we go", ""]
+    lines = ["The city sleeps in frozen light", "Feeling the winter in my bones", "walking through the falling snow", "Our footprints fading as we go", "",
+             "under streetlights crawling slow", "as I wander through the night though", "I never let you go", "calling out to the rolling road",
+             "stalling in the cold below", "the crawling cold and the stalling flow", "hello"]
     js = pg.evaluate("async a => (await (await fetch('api/rank_lines', {method:'POST', body: JSON.stringify(a)})).json())", {"line": "walking through the falling snow", "lines": lines})
     assert js == engine.rank_lines("walking through the falling snow", lines)
     assert pg.evaluate("async () => (await fetch('api/rank_lines', {method:'POST', body:'{}'})).status") == 400
     # association shards are lazy: only vocab + one shard fetched
     loaded = pg.evaluate("performance.getEntriesByType('resource').map(e => e.name).filter(n => n.includes('/assoc/'))")
-    assert any(n.endswith("vocab.json") for n in loaded) and len([n for n in loaded if ".bin" in n]) <= 9
+    assert any(n.endswith("vocab.json") for n in loaded) and len([n for n in loaded if ".bin" in n]) <= 40
     pg.close()
 
 def test_static_ai_mocked_worker(browser, site_url):
     import json as J
+    from urllib.parse import urlparse, parse_qs
     ctx = browser.new_context(viewport={"width": 390, "height": 844}); pg = ctx.new_page(); seen = []
     def h(route):
         if route.request.method == "OPTIONS": return route.fulfill(status=204)
-        seen.append(J.loads(route.request.post_data)); route.fulfill(status=200, content_type="application/json",
-            headers={"Access-Control-Allow-Origin": "*"}, body=J.dumps({"lines": ["Our footprints fading as we go", "The night is cold"], "model": "m"}))
-    pg.route("https://rhymer-ai.mock.invalid/lines", h)
+        assert route.request.method == "GET"   # GET ?q= so Workers Cache can serve repeats
+        body = J.loads(parse_qs(urlparse(route.request.url).query)["q"][0])
+        if "/brainstorm" in route.request.url:
+            return route.fulfill(status=200, content_type="application/json", headers={"Access-Control-Allow-Origin": "*"},
+                body=J.dumps({"perfect": ["tableau", "glow"], "multi": ["let it go"], "slant": [], "phrases": ["white glow"], "model": "m"}))
+        seen.append(body); route.fulfill(status=200, content_type="application/json",
+            headers={"Access-Control-Allow-Origin": "*"}, body=J.dumps({"lines": ["Our footprints fading as we go", "The night is cold", "The city sleeps in frozen light"], "model": "m"}))
+    pg.route("https://rhymer-ai.mock.invalid/**", h)
+    pg.goto(site_url + "?w=snow"); expect(pg.locator("#relCard")).to_have_attribute("data-bs", "done", timeout=30000)
+    assert "tableau" in " ".join(pg.locator("#relCard .ai").all_inner_texts()) and pg.locator("#relCard .w.rel").count() >= 100
     pg.goto(site_url + "#line"); pg.fill("#prevLine", "walking through the falling snow"); pg.click("#aiGo")
     expect(pg.locator("#aiLine")).to_have_attribute("data-state", "done", timeout=30000)
-    assert [t.lower() for t in pg.locator("#aiLine .ail .tb").all_inner_texts()] == ["perfect", "vowel"] and seen[0]["end_word"] == "snow"
-    pg.unroute("https://rhymer-ai.mock.invalid/lines"); pg.route("https://rhymer-ai.mock.invalid/lines", lambda r: r.abort())
-    pg.click("#aiGo"); expect(pg.locator("#aiLine")).to_have_attribute("data-state", "fallback", timeout=30000)
+    assert [t.lower() for t in pg.locator("#aiLine .ail .tb:not(.tx)").all_inner_texts()] == ["perfect", "vowel"] and seen[0]["end_word"] == "snow"
+    pg.unroute("https://rhymer-ai.mock.invalid/**"); pg.route("https://rhymer-ai.mock.invalid/**", lambda r: r.abort())
+    pg.select_option("#aiLine .aimood", "dark"); expect(pg.locator("#aiLine")).to_have_attribute("data-state", "fallback", timeout=30000)
     ctx.close()

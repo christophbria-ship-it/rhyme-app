@@ -70,6 +70,16 @@ def test_rank_lines_api(base_url):
     assert post(base_url, "/api/rank_lines", json.dumps({"line": "", "lines": []}).encode())[0] == 400
     assert post(base_url, "/api/rank_lines", b"[1]")[0] == 400
 
+def test_verify_api(base_url):
+    c, d = post(base_url, "/api/verify", json.dumps({"word": "snow", "items": ["glow", "let it go", "banana"]}).encode())
+    assert c == 200 and [x["text"] for x in d["items"]] == ["glow", "let it go"] and d["items"][1]["group"] == "phrase"
+    assert post(base_url, "/api/verify", json.dumps({"word": "snow", "items": "x"}).encode())[0] == 400
+    assert post(base_url, "/api/verify", b"nope")[0] == 400
+
+def test_related_api_big(base_url):
+    d = json.loads(get(base_url, "/api/related?word=heart")[1])
+    assert len(d["related"]) >= 100 and len(d["phrases"]) >= 20 and {"perfect", "multi", "slant"} <= {x["group"] for x in d["related"]}
+
 def test_ai_proxy(base_url, monkeypatch):
     import threading
     from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
@@ -87,4 +97,6 @@ def test_ai_proxy(base_url, monkeypatch):
     c, d = post(base_url, "/api/ai/lines", json.dumps({"line": "falling snow", "count": 6}).encode())
     assert c == 200 and d["lines"] == ["we let it go"] and got == {"path": "/lines", "key": "k123", "body": {"line": "falling snow", "count": 6}}
     assert post(base_url, "/api/ai/lines", json.dumps({"line": "x" * 9000}).encode())[0] == 413
+    c, d = post(base_url, "/api/ai/brainstorm", json.dumps({"word": "snow"}).encode())
+    assert c == 200 and got["path"] == "/brainstorm" and got["body"] == {"word": "snow"}
     s.shutdown()

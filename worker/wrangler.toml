@@ -8,4 +8,8 @@ binding = "AI"
 
 [vars]
 ALLOWED_ORIGINS = "https://christophbria-ship-it.github.io"
-MODEL = "@cf/meta/llama-3.1-8b-instruct-fp8"
+MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
+
+# Workers Cache: GET responses with Cache-Control are cached at the edge (repeat requests cost no AI quota)
+[cache]
+enabled = true
