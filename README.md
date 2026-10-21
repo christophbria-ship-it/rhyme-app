@@ -33,3 +33,24 @@ The service worker precaches the app shell + all data shards (works offline); it
 - **Line helper**: give the line to rhyme with and the start of your next line; it shows per-word syllables and stress (● stressed, ○ unstressed) and suggests endings that rhyme *and* bring your line to the same syllable count (falls back to any length). API: `/api/line?prev=&line=&theme=`.
 - **Lyrics pad**: a notebook-style editor with live per-line syllable counts, rhyme-scheme letters (solid = perfect/repeat, dashed = near rhyme; letters restart each stanza), autosave to localStorage, copy/download/clear, and click-an-end-word to look up rhymes. API: `GET /api/analyze?text=` or `POST /api/analyze {"text": ...}`.
 All three work in the static/offline PWA build too (same logic ported to `api-shim.js`, parity-tested).
+
+## Related rhymes (v4)
+
+The default theme mode is now **"Related to my word"**. A search for *snow* brings up words that are both associated with it and rhyme with it (low, below, slow, flow, blow, cold…), along with short phrases that end in a rhyme. The 20 mood themes are still in the same picker.
+
+- Data: GloVe 6B 100d (wiki+gigaword) vectors, limited to the top 45k frequent words. That leaves 39,691 usable words. Each word keeps 36 rhyme-neighbours, ranked by cosine similarity × rhyme quality (perfect 1, near .85, slant .7, assonant .5), and 20 general neighbours used for phrases.
+- Built by `build_assoc.py` (needs gensim plus the GloVe model) into `data/assoc/`: `vocab.json` and 16 binary shards of uint16 ids plus uint8 sims. About 6.1 MB total. The static site loads only the shard it needs, on demand.
+- API: `GET /api/related?word=snow`, `GET /api/rhymes?word=snow&theme=related`.
+
+## AI line writer (Cloudflare Worker)
+
+`worker/` holds a Cloudflare Worker (`rhymer-ai`) that uses Workers AI (`@cf/meta/llama-3.1-8b-instruct-fast`). You give it a lyric line and it returns 5–8 next lines that loosely rhyme. The app re-ranks them with the local rhyme engine (`POST /api/rank_lines`) so the true rhymes come first. The worker restricts CORS to the Pages origin, rate-limits each IP (12/min, 300/day per isolate), caps input lengths, and keeps no secrets on the client.
+
+Deploy:
+
+```
+cd worker && npx wrangler deploy      # needs CLOUDFLARE_API_TOKEN (Workers Scripts:Edit, Workers AI) + account
+echo "https://rhymer-ai.<subdomain>.workers.dev" > URL   # build_static.py writes it into site/config.js
+```
+
+Until the worker URL is configured, or whenever the worker or the network is down, the "✨ AI" buttons fall back to offline rhyme suggestions. The Python server can proxy `/api/ai/lines` when `RHYMER_AI_URL` / `RHYMER_AI_KEY` are set. Worker tests: `cd worker && node --test test/`.

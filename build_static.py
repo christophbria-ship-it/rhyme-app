@@ -9,6 +9,11 @@ n = (len(rows) + SHARDS - 1) // SHARDS
 for i in range(SHARDS):
     json.dump(rows[i*n:(i+1)*n], open(os.path.join(OUT, "data", f"words-{i}.json"), "w"), separators=(",", ":"))
 shutil.copy(os.path.join(ROOT, "data", "themes.json"), os.path.join(OUT, "data", "themes.json"))
+# association shards (lazy-loaded by the browser only in "Related to my word" mode)
+from engine import STOPWORDS
+shutil.copytree(os.path.join(ROOT, "data", "assoc"), os.path.join(OUT, "data", "assoc"))
+av = json.load(open(os.path.join(ROOT, "data", "assoc", "vocab.json"))); av["stopwords"] = sorted(STOPWORDS)
+json.dump(av, open(os.path.join(OUT, "data", "assoc", "vocab.json"), "w"), separators=(",", ":"))
 json.dump({"shards": SHARDS, "words": len(rows)}, open(os.path.join(OUT, "data", "manifest.json"), "w"))
 for f in ("app.css", "app.js", "manifest.webmanifest"): shutil.copy(os.path.join(ROOT, "static", f), OUT)
 shutil.copytree(os.path.join(ROOT, "static", "icons"), os.path.join(OUT, "icons"))
@@ -22,14 +27,20 @@ html = html.replace('<meta name="theme-color" content="#FBF7EF">', """<meta name
 <meta name="apple-mobile-web-app-status-bar-style" content="default"><meta name="apple-mobile-web-app-title" content="Rhymer">
 <meta name="application-name" content="Rhymer">""")
 html = html.replace('<script src="/app.js"></script>', '<script src="/app.js"></script><script>if("serviceWorker" in navigator)addEventListener("load",()=>navigator.serviceWorker.register("sw.js",{scope:"./"}).then(r=>window.SW_REG=r).catch(e=>console.warn("SW failed",e)));</script>')
-html = html.replace('href="/app.css"', 'href="app.css"').replace('<script src="/app.js"></script>', '<script src="api-shim.js"></script><script src="app.js"></script>')
+html = html.replace('href="/app.css"', 'href="app.css"')
+# AI worker endpoint for the static site (no secrets: the worker holds the Workers AI binding)
+ai_url = os.environ.get("RHYMER_AI_URL") or (open(os.path.join(ROOT, "worker", "URL")).read().strip() if os.path.exists(os.path.join(ROOT, "worker", "URL")) else "")
+open(os.path.join(OUT, "config.js"), "w").write(f"window.RHYMER_AI_URL={json.dumps(ai_url.rstrip('/') + '/lines' if ai_url else '')};\n")
+html = html.replace('<script src="api-shim.js"></script>', '<script src="config.js"></script><script src="api-shim.js"></script>').replace('<script src="/app.js"></script>', '<script src="config.js"></script><script src="api-shim.js"></script><script src="app.js"></script>')
 open(os.path.join(OUT, "index.html"), "w").write(html)
 open(os.path.join(OUT, ".nojekyll"), "w").close()
 # service worker: precache list + content-hash version
 import hashlib
-assets = ["./"] + sorted(os.path.relpath(os.path.join(dp, f), OUT).replace(os.sep, "/") for dp, _, fs in os.walk(OUT) for f in fs if f not in (".nojekyll",))
-h = hashlib.sha256()
-for a in assets[1:]: h.update(a.encode()); h.update(open(os.path.join(OUT, a), "rb").read())
+allfiles = sorted(os.path.relpath(os.path.join(dp, f), OUT).replace(os.sep, "/") for dp, _, fs in os.walk(OUT) for f in fs if f not in (".nojekyll",))
+# association shards are fetched lazily and cached at runtime by the service worker (not precached)
+assets = ["./"] + [a for a in allfiles if not a.startswith("data/assoc/shard-")]
+h = hashlib.sha256(b"rhymer-v4")
+for a in allfiles: h.update(a.encode()); h.update(open(os.path.join(OUT, a), "rb").read())
 sw = open(os.path.join(ROOT, "static", "sw.js")).read().replace("__VERSION__", h.hexdigest()[:12]).replace("__ASSETS__", json.dumps(assets))
 open(os.path.join(OUT, "sw.js"), "w").write(sw)
 print("sw version", h.hexdigest()[:12], "precache", len(assets), "files")

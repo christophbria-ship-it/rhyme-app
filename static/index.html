@@ -13,7 +13,7 @@
 <div class="themebar" id="themebar">
   <label class="switch"><input type="checkbox" id="themeToggle" role="switch" aria-checked="false"><span class="track"><span class="knob"></span></span><span class="swlabel">Themed rhymes</span></label>
   <select id="theme" aria-label="Theme" disabled><option value="">Choose a theme…</option></select>
-  <label class="chk"><input type="checkbox" id="themeOnly" disabled> On-theme only</label>
+  <label class="chk"><input type="checkbox" id="themeOnly" disabled> Only related / on-theme</label>
 </div>
 <section id="tab-rhymes" class="panel" role="tabpanel" aria-labelledby="t-rhymes">
 <form id="f" autocomplete="off" role="search">
@@ -39,20 +39,22 @@
     <p class="hint">Write the line you need to rhyme with, then start your next line. Rhymer counts syllables and suggests end words that rhyme <em>and</em> fit the meter.</p>
     <label class="fl">Line to rhyme with<input id="prevLine" type="text" placeholder="e.g. The waves were crashing at my feet" autocomplete="off"></label>
     <label class="fl">Your next line, so far<input id="curLine" type="text" placeholder="e.g. My heart was skipping" autocomplete="off"></label>
-    <div class="row"><button type="button" id="lineGo">Suggest endings</button><button type="button" class="ghost" id="lineSample">Try an example</button></div>
+    <div class="row"><button type="button" id="lineGo">Suggest endings</button><button type="button" class="aibtn" id="aiGo">✨ AI write lines</button><button type="button" class="ghost" id="lineSample">Try an example</button></div>
   </div>
+  <div class="aibox" id="aiLine" hidden></div>
   <section id="lineStatus" aria-live="polite"></section>
   <section id="lineOut"></section>
 </section>
 <section id="tab-pad" class="panel" role="tabpanel" aria-labelledby="t-pad" hidden>
   <div class="card padcard">
     <div class="padhead"><h2 class="ptitle">Lyrics pad</h2>
-      <div class="padtools"><span id="padSaved" class="saved" aria-live="polite"></span><button type="button" class="ghost" id="padCopy">Copy</button><button type="button" class="ghost" id="padDownload">Download</button><button type="button" class="ghost" id="padClear">Clear</button></div></div>
+      <div class="padtools"><span id="padSaved" class="saved" aria-live="polite"></span><button type="button" class="aibtn" id="padAI">✨ AI next line</button><button type="button" class="ghost" id="padCopy">Copy</button><button type="button" class="ghost" id="padDownload">Download</button><button type="button" class="ghost" id="padClear">Clear</button></div></div>
     <p class="hint">Write freely — syllables per line and the rhyme scheme update as you type. Saved on this device. Click an end word to find its rhymes.</p>
     <div class="padgrid"><textarea id="pad" spellcheck="true" aria-label="Lyrics" placeholder="Start writing your verse here…&#10;&#10;Leave a blank line between verses."></textarea>
     <ol id="padLines" aria-label="Line analysis"></ol></div>
     <div id="padStats" class="meta"></div>
   </div>
+  <div class="aibox" id="aiPad" hidden></div>
 </section>
 </main>
 <footer>Data: CMU Pronouncing Dictionary · wordfreq · g2p_en (generated, <i>italic</i>) · WordNet 3.0 (POS)</footer>

@@ -1,0 +1,11 @@
+name = "rhymer-ai"
+main = "src/index.js"
+compatibility_date = "2026-10-01"
+workers_dev = true
+
+[ai]
+binding = "AI"
+
+[vars]
+ALLOWED_ORIGINS = "https://christophbria-ship-it.github.io"
+MODEL = "@cf/meta/llama-3.1-8b-instruct-fast"

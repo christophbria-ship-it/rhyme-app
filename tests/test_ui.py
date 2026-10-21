@@ -85,13 +85,17 @@ def test_tabs(page, base_url):
 
 def test_theme_toggle(page, base_url):
     page.goto(base_url + "/?w=night"); expect(page.locator("#status")).to_have_attribute("data-state", "done")
-    assert page.locator(".w.on").count() == 0 and page.is_disabled("#theme")
+    # default: switch on, "Related to my word"
+    expect(page.locator("#themeToggle")).to_be_checked(); expect(page.locator("#theme")).to_have_value("related")
+    expect(page.locator("#relCard")).to_be_visible()
+    page.locator(".switch").click(); expect(page.locator("#theme")).to_be_disabled(); expect(page.locator("#relCard")).to_have_count(0)
+    assert page.locator(".w.on").count() == 0
     page.locator(".switch").click(); expect(page.locator("#theme")).to_be_enabled()
     page.select_option("#theme", "night"); expect(page.locator(".ontheme")).to_be_visible()
     expect(page.locator('.tier[data-tier="perfect"] .w').first).to_have_class(re.compile(r"\bon\b"))
     assert page.locator('.tier[data-tier="perfect"] .w.on[data-w="light"]').count() == 1
     page.wait_for_timeout(350); shot(page, "theme-on")
-    page.check("#themeOnly"); expect(page.locator(".w:not(.on)")).to_have_count(0)
+    page.check("#themeOnly"); expect(page.locator(".tier .w:not(.on)")).to_have_count(0)
     page.reload(); expect(page.locator("#themeToggle")).to_be_checked(); expect(page.locator("#theme")).to_have_value("night")
     page.locator(".switch").click(); expect(page.locator(".ontheme")).to_have_count(0)
 
@@ -124,3 +128,60 @@ def test_lyrics_pad_error(page, base_url):
     page.route("**/api/analyze", lambda r: r.fulfill(status=500, content_type="application/json", body='{"error":"internal error"}'))
     page.goto(base_url + "/#pad"); page.fill("#pad", "hello world")
     expect(page.locator("#padStats .err")).to_contain_text("internal error")
+
+
+# ---- related rhymes + AI line writer (worker mocked) ----
+import json as _json
+AI_LINES = ["The world is hushed and white below", "I feel the bitter winter wind blow", "The city sleeps in frozen light",
+            "Our footprints fading as we go", "Feeling the winter in my bones", "walking through the falling snow"]
+
+def mock_ai(page, lines=AI_LINES, status=200, seen=None):
+    def h(route):
+        body = _json.loads(route.request.post_data or "{}")
+        if seen is not None: seen.append(body)
+        if status != 200: return route.fulfill(status=status, content_type="application/json", body=_json.dumps({"error": "AI service error"}))
+        out = [l for l in lines if l not in body.get("exclude", [])] or ["A brand new line that ends in glow"]
+        route.fulfill(status=200, content_type="application/json", body=_json.dumps({"lines": out[:6], "model": "@cf/meta/mock", "ms": 5}))
+    page.route("**/api/ai/lines", h)
+
+def test_related_card(page, base_url):
+    page.goto(base_url + "/?w=snow"); expect(page.locator("#relCard")).to_be_visible()
+    rel = page.locator("#relCard .w.rel").evaluate_all("e => e.map(x => x.dataset.w)")
+    assert "cold" in rel and {"blow", "below", "low", "glow"} & set(rel), rel
+    expect(page.locator("#relCard .phrase").first).to_be_visible()
+    page.wait_for_timeout(350); shot(page, "related")
+    ph = page.locator("#relCard .phrase").first; ph.click(); expect(ph).to_have_text("Copied ✓")
+    page.locator('#relCard .w.rel[data-w="cold"]').click(); expect(page.locator("#q")).to_have_value("cold")
+
+def test_ai_line_writer(page, base_url):
+    seen = []; mock_ai(page, seen=seen)
+    page.goto(base_url + "/#line"); page.click("#aiGo"); expect(page.locator("#aiLine .err")).to_contain_text("Write a lyric line")
+    page.fill("#prevLine", "walking through the falling snow"); page.select_option("#aiLine .aimood", "love"); page.click("#aiGo")
+    expect(page.locator("#aiLine")).to_have_attribute("data-state", "done")
+    tiers = [t.lower() for t in page.locator("#aiLine .ail .tb").all_inner_texts()]
+    assert tiers[:3] == ["perfect"] * 3 and tiers[-1] == "repeat", tiers
+    b = seen[0]; assert b["line"] == "walking through the falling snow" and b["mood"] == "love" and b["end_word"] == "snow"
+    assert b["syllables"] == 7 and "glow" in b["rhymes"] and b["exclude"] == []
+    page.wait_for_timeout(350); shot(page, "ai-lines")
+    page.locator("#aiLine .cp").first.click(); expect(page.locator("#aiLine .cp").first).to_have_text("Copied ✓")
+    page.click("#aiLine .aimore"); expect(page.locator("#aiLine .ail")).to_have_count(7)
+    assert len(seen) == 2 and len(seen[1]["exclude"]) == 6
+
+def test_ai_fallback(page, base_url):
+    mock_ai(page, status=502)
+    page.goto(base_url + "/#line"); page.fill("#prevLine", "walking through the falling snow"); page.click("#aiGo")
+    expect(page.locator("#aiLine")).to_have_attribute("data-state", "fallback")
+    expect(page.locator("#aiLine .note")).to_contain_text("AI unavailable"); expect(page.locator("#aiLine .fbw").first).to_be_visible()
+    page.wait_for_timeout(300); shot(page, "ai-fallback")
+    page.unroute("**/api/ai/lines"); page.context.set_offline(True)
+    page.click("#aiGo"); expect(page.locator("#aiLine .note")).to_contain_text("offline"); page.context.set_offline(False)
+
+def test_ai_lyrics_pad(page, base_url):
+    seen = []; mock_ai(page, seen=seen)
+    page.goto(base_url + "/#pad"); page.fill("#pad", "Cold wind across the frozen lake\nwalking through the falling snow"); page.click("#padAI")
+    expect(page.locator("#aiPad")).to_have_attribute("data-state", "done")
+    assert seen[0]["line"] == "walking through the falling snow" and seen[0]["context"] == "Cold wind across the frozen lake"
+    page.locator("#aiPad .ins").first.click()
+    expect(page.locator("#pad")).to_have_value("Cold wind across the frozen lake\nwalking through the falling snow\nThe world is hushed and white below")
+    expect(page.locator("#scheme")).to_contain_text("ABB")
+    page.wait_for_timeout(300); shot(page, "ai-pad")

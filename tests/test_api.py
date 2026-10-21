@@ -55,3 +55,36 @@ def test_line_api(base_url):
     d = json.loads(get(base_url, "/api/line?" + urllib.parse.urlencode({"prev": "The waves were crashing at my feet", "line": "My heart was skipping", "theme": "love"}))[1])
     assert d["needed"] == 3 and d["theme"] == "love" and all(x["syllables"] == 3 for x in d["suggestions"]["perfect"])
     assert get(base_url, "/api/line?prev=")[0] == 400 and get(base_url, "/api/line?prev=hello&theme=zz")[0] == 400
+
+# ---- related + AI proxy ----
+def test_related_api(base_url):
+    d = json.loads(get(base_url, "/api/related?word=snow&limit=50")[1])
+    assert d["in_vocab"] and "cold" in [x["word"] for x in d["related"]] and d["phrases"]
+    assert get(base_url, "/api/related")[0] == 400 and get(base_url, "/api/related?word=%3Cx%3E")[0] == 400
+    d = json.loads(get(base_url, "/api/rhymes?word=night&theme=related&theme_only=1")[1])
+    assert d["perfect"] and all(x["themed"] for x in d["perfect"]) and "light" in [x["word"] for x in d["perfect"]]
+
+def test_rank_lines_api(base_url):
+    c, d = post(base_url, "/api/rank_lines", json.dumps({"line": "falling snow", "lines": ["the night is cold", "we let it go"]}).encode())
+    assert c == 200 and [x["tier"] for x in d["lines"]] == ["perfect", "assonant"]
+    assert post(base_url, "/api/rank_lines", json.dumps({"line": "", "lines": []}).encode())[0] == 400
+    assert post(base_url, "/api/rank_lines", b"[1]")[0] == 400
+
+def test_ai_proxy(base_url, monkeypatch):
+    import threading
+    from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
+    got = {}
+    class W(BaseHTTPRequestHandler):
+        def log_message(self, *a): pass
+        def do_POST(self):
+            got["path"] = self.path; got["key"] = self.headers.get("X-Rhymer-Key"); got["body"] = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            b = json.dumps({"lines": ["we let it go"], "model": "mock"}).encode()
+            self.send_response(200); self.send_header("Content-Type", "application/json"); self.send_header("Content-Length", str(len(b))); self.end_headers(); self.wfile.write(b)
+    s = ThreadingHTTPServer(("127.0.0.1", 0), W); threading.Thread(target=s.serve_forever, daemon=True).start()
+    monkeypatch.delenv("RHYMER_AI_URL", raising=False)
+    assert post(base_url, "/api/ai/lines", b'{"line":"x"}')[0] == 503
+    monkeypatch.setenv("RHYMER_AI_URL", f"http://127.0.0.1:{s.server_address[1]}"); monkeypatch.setenv("RHYMER_AI_KEY", "k123")
+    c, d = post(base_url, "/api/ai/lines", json.dumps({"line": "falling snow", "count": 6}).encode())
+    assert c == 200 and d["lines"] == ["we let it go"] and got == {"path": "/lines", "key": "k123", "body": {"line": "falling snow", "count": 6}}
+    assert post(base_url, "/api/ai/lines", json.dumps({"line": "x" * 9000}).encode())[0] == 413
+    s.shutdown()

@@ -57,8 +57,8 @@ function rhymes(q){const raw=(q.get("word")||"").trim();if(!raw)return[400,{erro
   let syl,minl,maxl,minf;try{syl=q.get("syllables")?q.get("syllables").split(",").filter(x=>x.trim()).map(x=>{const n=parseInt(x,10);if(isNaN(n)||!/^\s*-?\d+\s*$/.test(x))throw 0;return n}):null;
     minl=num("min_len");maxl=num("max_len");minf=num("min_freq")}catch(e){return[400,{error:"invalid number"}]}
   const w=raw.toLowerCase();if(!WORD_RE.test(w))return[400,{error:"invalid word"}];
-  const theme=q.get("theme")||null,themeOnly=["1","true"].includes(q.get("theme_only"));if(theme&&!W.tsets[theme])return[400,{error:"unknown theme"}];
-  const tset=theme?W.tsets[theme]:null;
+  const theme=q.get("theme")||null,themeOnly=["1","true"].includes(q.get("theme_only"));if(theme&&theme!=="related"&&!W.tsets[theme])return[400,{error:"unknown theme"}];
+  const tset=theme?(theme==="related"?relatedSet(w):W.tsets[theme]):null;
   const t0=performance.now(),cd=candidates(w),limit=Math.min(parseInt(q.get("limit")||"300",10),5000);
   const res={word:w,known:!cd.guessed,confidence:W.info.has(w)?W.info.get(w).conf:"guess",guessed_from:cd.guessed?cd.src:null,pronunciations:cd.prons.map(p=>p.join(" ")),perfect:[],near:[],slant:[]};
   for(const tier of["perfect","near","slant"]){const items=[];for(const[c,m,sc]of cd[tier]){const inf=W.info.get(c);
@@ -105,14 +105,79 @@ function lineHelp(q){const prev=q.get("prev")||"";if(!prev.trim())return[400,{er
   const sug={};for(const t of["perfect","near","slant"])sug[t]=r[t].filter(x=>/[aeiouy]/.test(x.word));
   return[200,{prev:p,line:l,target_syllables:p.syllables,needed:needed>=1?needed:null,fits_count:fit,end_word:p.end,theme,suggestions:sug}]}
 function themesList(){return[200,{themes:Object.entries(W.themes).map(([id,t])=>({id,label:t.label,size:W.tsets[id].size}))}]}
+// ---- related rhymes (port of Engine.related; association shards lazy-loaded on first use) ----
+const TIER_Q={perfect:1,near:0.85,slant:0.7},ASSONANT_Q=0.5;let AV=null,AVp=null;const ASH={};
+const stemClash=(w,c)=>(w.length>=4&&c.startsWith(w.slice(0,4)))||w.startsWith(c)||(c.length>=4&&w.startsWith(c.slice(0,4)));
+async function assocEnsure(w){const base=new URL('data/assoc/',document.baseURI);
+  if(!AV){AVp=AVp||(async()=>{const r=await realFetch(new URL('vocab.json',base));if(!r.ok)throw new Error('association data unavailable');
+    const v=await r.json();v.index=new Map(v.words.map((x,i)=>[x,i]));v.stop=new Set(v.stopwords);v.rec=v.k_rhyme*3+v.k_gen*2;AV=v})();await AVp}
+  const i=AV.index.get(w);if(i===undefined)return;const sh=Math.floor(i/AV.per_shard);
+  if(!ASH[sh])ASH[sh]=realFetch(new URL(`shard-${String(sh).padStart(2,'0')}.bin`,base)).then(r=>{if(!r.ok)throw new Error('association data unavailable');return r.arrayBuffer()}).then(b=>ASH[sh]=new DataView(b));
+  await ASH[sh]}
+function neighbours(w){if(!AV)return null;const i=AV.index.get(w);if(i===undefined)return null;const sh=Math.floor(i/AV.per_shard),dv=ASH[sh];
+  const o=(i%AV.per_shard)*AV.rec,rl=[],gl=[];
+  for(let k=0;k<AV.k_rhyme;k++){const c=dv.getUint16(o+2*k,true);if(c!==65535)rl.push([AV.words[c],dv.getUint8(o+AV.k_rhyme*2+k)/255])}
+  for(let k=0;k<AV.k_gen;k++){const c=dv.getUint16(o+AV.k_rhyme*3+2*k,true);if(c!==65535)gl.push(AV.words[c])}return[rl,gl]}
+const r4=x=>Math.round(x*1e4)/1e4,r3=x=>Math.round(x*1e3)/1e3;
+function relatedCore(w,limit,minFreq,nPhr){const nb=neighbours(w),res={word:w,in_vocab:!!nb,related:[],phrases:[],related_total:0};if(!nb)return res;
+  const[rl,gl]=nb,cd=candidates(w),tierOf=new Map(),STOP=AV.stop;
+  for(const t of["slant","near","perfect"])for(const[c]of cd[t])tierOf.set(c,t);
+  const cand=new Map();
+  for(const[c,sim]of rl){if(c===w||stemClash(w,c)||!W.info.has(c)||STOP.has(c))continue;cand.set(c,[sim,tierOf.get(c)||"assonant"])}
+  gl.forEach((c,r)=>{if(cand.has(c)||c===w||stemClash(w,c)||!tierOf.has(c)||STOP.has(c))return;cand.set(c,[0.6-0.01*r,tierOf.get(c)])});
+  const items=[];for(const[c,[sim,t]]of cand){const inf=W.info.get(c);if(minFreq!=null&&inf.freq<minFreq)continue;const sc=sim*(TIER_Q[t]||ASSONANT_Q);
+    items.push({word:c,assoc:r3(sim),tier:t,score:r4(sc),_s:sc,syllables:inf.syl,freq:inf.freq,pos:inf.pos,conf:inf.conf})}
+  items.sort((a,b)=>b._s-a._s||cmp(a.word,b.word));
+  const pool=[...rl.filter(([c])=>c!==w&&!stemClash(w,c)&&W.info.has(c)&&!STOP.has(c)),...gl.map((c,r)=>[c,0.6-0.01*r]).filter(([c])=>c!==w&&!stemClash(w,c)&&W.info.has(c)&&!STOP.has(c))];
+  const used=new Map(),out=[];
+  for(const e of items.slice(0,16)){const ep=e.pos;let best=null;
+    const kind=ep.includes("adj")?"adj":ep.includes("adv")?"adv":ep.includes("n")?"n":ep.includes("v")?"v":null;if(!kind)continue;
+    for(const[c,a]of pool){if(c===e.word||(used.get(c)||0)>=2||stemClash(e.word,c))continue;const pp=W.info.get(c).pos;
+      const verbish=c.endsWith("ing")||(pp.includes("v")&&(c.endsWith("s")||c.endsWith("ed")));let text;
+      if((kind==="adj"||kind==="adv")&&verbish)text=`${c} ${e.word}`;else if(kind==="n"&&pp.includes("adj")&&!verbish)text=`the ${c} ${e.word}`;
+      else if(kind==="v"&&pp.includes("n")&&!pp.includes("v"))text=`${c} ${e.word}`;else continue;
+      if(best===null||a>best[1])best=[text,a,c]}
+    if(best){used.set(best[2],(used.get(best[2])||0)+1);out.push({text:best[0],end:e.word,tier:e.tier,_s:e._s*best[1],score:r4(e._s*best[1])})}}
+  out.sort((a,b)=>b._s-a._s||cmp(a.text,b.text));for(const x of[...items,...out])delete x._s;
+  res.related_total=items.length;res.related=items.slice(0,limit);res.phrases=out.slice(0,nPhr);return res}
+function relatedSet(w){const r=relatedCore(w,1e9,null,0),s=new Set(r.related.map(x=>x.word));const nb=r.in_vocab?neighbours(w):null;
+  if(nb)for(const c of nb[1])if(!stemClash(w,c))s.add(c);return s}
+function related(q){const raw=(q.get("word")||"").trim();if(!raw)return[400,{error:"missing 'word' parameter"}];const w=raw.toLowerCase();
+  if(!WORD_RE.test(w))return[400,{error:"invalid word"}];const mf=q.get("min_freq");
+  return[200,relatedCore(w,Math.min(parseInt(q.get("limit")||"40",10),500),mf?Number(mf):null,12)]}
+// ---- AI line post-check (port of Engine.rank_lines) ----
+const RANK_ORDER={perfect:0,near:1,slant:2,assonant:3,none:4,repeat:5};
+function stressedVowels(w){const[pl]=prons(w),out=new Set();for(const p of pl){const v=tail(p).map(strip).filter(x=>VOWELS.has(x));if(v.length)out.add(v[0])}return out}
+function rankLines(line,lines){if(typeof line!=="string"||!line.trim())throw new RangeError("missing line");
+  if(!Array.isArray(lines)||lines.length>20||!lines.every(x=>typeof x==="string"&&x.length<=200))throw new RangeError("invalid lines");
+  if(line.length>200)throw new RangeError("line too long");
+  const src=analyzeText(line.trim()).lines[0];if(!src.words.length)throw new RangeError("line has no words");
+  const end=src.end,ew=wordInfo(end),tiers=new Map();
+  if(WORD_RE.test(end)){const cd=candidates(end);for(const t of["slant","near","perfect"])for(const[c]of cd[t])tiers.set(c,t)}
+  const sv=stressedVowels(end),out=lines.map((text,i)=>{const a=text.trim()?analyzeText(text.trim()).lines[0]:{words:[]};
+    if(!a.words.length)return{text,end:null,tier:"none",syllables:0,syllable_diff:src.syllables,_i:i};
+    const e=a.end;let t;if(e===end)t="repeat";else if(tiers.has(e))t=tiers.get(e);else if(wordInfo(e).keys.some(k=>ew.keys.includes(k)))t="perfect";
+    else if([...stressedVowels(e)].some(v=>sv.has(v)))t="assonant";else t="none";
+    return{text:text.trim(),end:e,tier:t,syllables:a.syllables,syllable_diff:Math.abs(a.syllables-src.syllables),_i:i}});
+  out.sort((a,b)=>RANK_ORDER[a.tier]-RANK_ORDER[b.tier]||a.syllable_diff-b.syllable_diff||a._i-b._i);out.forEach(x=>delete x._i);
+  return{line:line.trim(),end,syllables:src.syllables,lines:out}}
 const realFetch=window.fetch.bind(window);
 window.fetch=async(input,init)=>{const url=new URL(typeof input==="string"?input:input.url,location.href);
   const p=url.pathname.replace(/.*\/api\//,"/api/");if(!url.pathname.includes("/api/"))return realFetch(input,init);
-  await ready;if(init&&init.signal&&init.signal.aborted)throw new DOMException("aborted","AbortError");
+  await ready;
+  if(p==="/api/related"||((p==="/api/rhymes"||p==="/api/line")&&url.searchParams.get("theme")==="related")){
+    const tk=p==="/api/line"?((url.searchParams.get("prev")||"").trim().match(TOKEN)||[]):[];
+    const ww=p==="/api/line"?(tk.length?tk[tk.length-1].toLowerCase().replace(/^'+|'+$/g,""):""):(url.searchParams.get("word")||"").trim().toLowerCase();
+    try{await assocEnsure(ww)}catch(e){if(p==="/api/related")return new Response(JSON.stringify({error:navigator.onLine===false?"offline — association data not cached yet":e.message}),{status:503,headers:{"Content-Type":"application/json"}});
+      url.searchParams.delete("theme");url.searchParams.delete("theme_only")}}  // rhymes still work without association data
+  if(init&&init.signal&&init.signal.aborted)throw new DOMException("aborted","AbortError");
   let r;try{
-    if(init&&init.method==="POST"){if(p!=="/api/analyze")r=[404,{error:"not found"}];else{let b;try{b=JSON.parse(init.body||"{}")}catch(e){b=null}
-      r=b&&typeof b.text==="string"?(()=>{try{return[200,analyzeText(b.text)]}catch(e){return[400,{error:e.message}]}})():[400,{error:"missing 'text'"}]}}
-    else r=p==="/api/themes"?themesList():p==="/api/analyze"?analyze(url.searchParams):p==="/api/line"?lineHelp(url.searchParams):p==="/api/rhymes"?rhymes(url.searchParams):p==="/api/suggest"?suggest(url.searchParams):p==="/api/health"?[200,{ok:true,words:W.words.length}]:[404,{error:"not found"}]}
+    if(init&&init.method==="POST"){let b;try{b=JSON.parse(init.body||"{}")}catch(e){b=null}
+      if(p==="/api/ai/lines")return realFetch(input,init);
+      if(p==="/api/rank_lines")r=b&&typeof b==="object"?(()=>{try{return[200,rankLines(b.line,b.lines)]}catch(e){if(e instanceof RangeError)return[400,{error:e.message}];throw e}})():[400,{error:"body must be an object"}];
+      else if(p!=="/api/analyze")r=[404,{error:"not found"}];
+      else r=b&&typeof b.text==="string"?(()=>{try{return[200,analyzeText(b.text)]}catch(e){return[400,{error:e.message}]}})():[400,{error:"missing 'text'"}]}
+    else r=p==="/api/related"?related(url.searchParams):p==="/api/themes"?themesList():p==="/api/analyze"?analyze(url.searchParams):p==="/api/line"?lineHelp(url.searchParams):p==="/api/rhymes"?rhymes(url.searchParams):p==="/api/suggest"?suggest(url.searchParams):p==="/api/health"?[200,{ok:true,words:W.words.length}]:[404,{error:"not found"}]}
   catch(e){r=[500,{error:"internal error"}]}
   return new Response(JSON.stringify(r[1]),{status:r[0],headers:{"Content-Type":"application/json"}})};
 window.RHYME_READY=ready;
