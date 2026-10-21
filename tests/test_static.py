@@ -170,6 +170,14 @@ def test_related_and_rank_parity(browser, site_url, engine):
     js = pg.evaluate("async a => (await (await fetch('api/rank_lines', {method:'POST', body: JSON.stringify(a)})).json())", {"line": "walking through the falling snow", "lines": lines})
     assert js == engine.rank_lines("walking through the falling snow", lines)
     assert pg.evaluate("async () => (await fetch('api/rank_lines', {method:'POST', body:'{}'})).status") == 400
+    for line, cands, sense in [("my heart is beating like a drum", ["got my fingers snapping to the succumb", "the rhythm's calling me back home from", "till the feeling in my chest goes numb",
+                                 "hours pass by like beating dough", "counting every second till the morning comes", "the crowd is cheering waiting for some"], [2, 4, 9, 1, 10, 6.5]),
+                               ("walking through the falling snow", ["hours pass by like falling dough", "the stars are calling, crawling slow", "I miss you so though"], [2.5, 8, 3.5]),
+                               ("I love the night", ["we dance till the morning light", "the city glows so bright", "hold me tight"], None)]:
+        a = {"line": line, "lines": cands, **({"sense": sense} if sense else {})}
+        js = pg.evaluate("async a => (await (await fetch('api/rank_lines', {method:'POST', body: JSON.stringify(a)})).json())", a)
+        assert js == engine.rank_lines(line, cands, sense=sense), line
+    assert pg.evaluate("async () => (await fetch('api/rank_lines', {method:'POST', body: JSON.stringify({line:'a b', lines:['x'], sense:[11]})})).status") == 400
     # association shards are lazy: only vocab + one shard fetched
     loaded = pg.evaluate("performance.getEntriesByType('resource').map(e => e.name).filter(n => n.includes('/assoc/'))")
     assert any(n.endswith("vocab.json") for n in loaded) and len([n for n in loaded if ".bin" in n]) <= 40

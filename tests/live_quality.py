@@ -15,7 +15,7 @@ def body_for(e, line, mood="any"):
     def add(w, cap=10):
         if len(H) < cap and w not in H and w != end: H.append(w)
     for x in [x for x in rel if x["tier"] == "perfect"][:7]: add(x["word"])
-    for x in sorted([x for x in h["suggestions"]["perfect"] if x["freq"] >= 4.2 and x["word"].isalpha() and len(x["word"]) >= 3], key=lambda x: -x["freq"])[:12]: add(x["word"], 8)
+    for x in sorted([x for x in h["suggestions"]["perfect"] if x["freq"] >= 4.2 and x["pos"] and x["word"].isalpha() and len(x["word"]) >= 3], key=lambda x: -x["freq"])[:12]: add(x["word"], 8)
     for x in rel: add(x["word"])
     rel = H
     rhythm = " ".join("-".join("DUM" if c == "/" else "da" for c in w["stress"]) for w in h["prev"]["words"])
@@ -25,9 +25,10 @@ def body_for(e, line, mood="any"):
 
 def run(e, line):
     b = body_for(e, line); q = json.dumps(b, separators=(",", ":"))
-    req = urllib.request.Request(URL + "/lines?q=" + urllib.parse.quote(q), headers={"Origin": ORIGIN, "User-Agent": "rhymer-live-test"})
+    req = urllib.request.Request(URL + "/lines?v=6e&q=" + urllib.parse.quote(q), headers={"Origin": ORIGIN, "User-Agent": "rhymer-live-test"})
     with urllib.request.urlopen(req, timeout=90) as r: d = json.load(r); cache = r.headers.get("cf-cache-status")
-    ranked = e.rank_lines(line, d["lines"][:40])["lines"]
+    sense = d.get("sense") if isinstance(d.get("sense"), list) and len(d["sense"]) == len(d["lines"]) else None
+    ranked = e.rank_lines(line, d["lines"][:40], sense=sense[:40] if sense else None)["lines"]
     best = [x for x in ranked if x["tier"] != "none" and x["score"] >= 35][:8]
     good = [x for x in best if x["tier"] in ("perfect", "near") and abs(x["syllable_diff"]) <= 2]
     return d, cache, ranked, best, good
@@ -37,7 +38,7 @@ if __name__ == "__main__":
     for line in lines:
         d, cache, ranked, best, good = run(e, line)
         print(f"\n{line!r}: model={d.get('model')} candidates={len(d['lines'])} cache={cache} cached={d.get('cached', False)}")
-        for x in best: print(f"  {x['score']:3d} {x['tier']:8s} syl={x['syllables']:2d} multi={x['multi']} int={x['internal']}  {x['text']}")
+        for x in best: print(f"  {x['score']:3d} {x['tier']:8s} syl={x['syllables']:2d} multi={x['multi']} int={x['internal']} sense={x['sense']}  {x['text']}")
         print(f"  -> {len(good)}/{len(best)} true stressed-vowel rhymes within +-2 syllables")
         ok &= len(best) == 8 and len(good) >= 6
     sys.exit(0 if ok else 1)

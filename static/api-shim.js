@@ -136,7 +136,7 @@ function coda(ph){const t=tail(ph).map(strip);return t.length>0&&VOWELS.has(t[0]
 const tailVowels=ph=>tail(ph).filter(isV).length;
 function svowelsPh(pl){const out=[];for(const p of pl){const v=tail(p).map(strip).filter(x=>VOWELS.has(x));if(v.length&&!out.includes(v[0]))out.push(v[0])}return out}
 // ---- related rhymes (port of Engine.related; association data lazy-loaded per vowel group) ----
-const TIER_Q={perfect:1,near:0.85,slant:0.7},ASSONANT_Q=0.5,SRC_W={ai:1,wikt:0.9,cn:0.5,combo:0.8};
+const pyRound=x=>{const f=Math.floor(x),d=x-f;return d>0.5?f+1:d<0.5?f:(f%2===0?f:f+1)};const DETS=new Set(["the","a","an","my","your","his","her","our","their","this","every","each"]);const TIER_Q={perfect:1,near:0.85,slant:0.7},ASSONANT_Q=0.5,SRC_W={ai:1,wikt:0.9,cn:0.5,combo:0.8};
 let AV=null,AVp=null;const AQ={},AG={},AP={};
 const stemClash=(w,c)=>(w.length>=4&&c.startsWith(w.slice(0,4)))||w.startsWith(c)||(c.length>=4&&w.startsWith(c.slice(0,4)));
 const abase=()=>new URL('data/assoc/',document.baseURI);
@@ -180,16 +180,12 @@ function relatedCore(w,limit,minFreq,nPhr){const q=aquery(w),res={word:w,in_voca
     items.push({word:c,assoc:r3(a),tier:t,group:g,matched:ml,score:r4(sc),_s:sc,syllables:inf.syl,freq:inf.freq,pos:inf.pos,conf:inf.conf})}
   items.sort((a,b)=>b._s-a._s||cmp(a.word,b.word));
   let out=[];const pseen=new Set();
-  for(const v of svowelsPh(cd.prons))for(const[text,ph,src,vec,n]of aphr(v)){if(pseen.has(text))continue;const toks=text.split(" ");const last=toks[toks.length-1];
-    if(last===w||stemClash(w,last))continue;const t=qph.length?tailTier(qph,ph):null;if(t===null)continue;
+  for(const v of svowelsPh(cd.prons))for(const[text,ph,src,vec,n]of aphr(v)){if(pseen.has(text)||src==="cn")continue;const toks=text.split(" ");const last=toks[toks.length-1];
+    const parts=text.replace(/-/g," ").split(/\s+/).filter(Boolean);if(parts.some(x=>x===w||stemClash(w,x)))continue;
+    if(parts.some(x=>x.length===1&&x!=="a"&&x!=="i"))continue;const t=qph.length?tailTier(qph,ph):null;if(t===null)continue;
     const vm=vowelMatch(qph,ph);if(t==="assonant"&&vm<2)continue;const a=cos(qv,qn,vec,n);if(a<P.P_MIN)continue;
-    const sc=a*(TIER_Q[t]||ASSONANT_Q)*(SRC_W[src]||0.7)*(1+0.15*Math.max(0,vm-qtail));pseen.add(text);
+    let sc=a*(TIER_Q[t]||ASSONANT_Q)*(SRC_W[src]||0.7)*(1+0.15*Math.max(0,vm-qtail));if(src==="wikt"&&parts.length===2)sc*=0.6;pseen.add(text);
     out.push({text,end:last,tier:t,source:src,score:r4(sc),_s:sc})}
-  const mods=gen.filter(c=>W.info.has(c)&&W.info.get(c).pos.includes("adj")&&!c.endsWith("ing")&&!stemClash(w,c)).slice(0,8);
-  const ends=items.filter(x=>x.group!=="slant"&&x.pos.includes("n")&&(x.tier==="perfect"||x.tier==="near")).slice(0,24),used=new Map();
-  mods.forEach((mw,r)=>{let k=0;for(const e of ends){if((used.get(e.word)||0)>=2||stemClash(mw,e.word))continue;const text=`${mw} ${e.word}`;if(pseen.has(text))continue;
-    const sc=e._s*SRC_W.combo*(0.9-0.04*r);pseen.add(text);used.set(e.word,(used.get(e.word)||0)+1);k++;
-    out.push({text,end:e.word,tier:e.tier,source:"combo",score:r4(sc),_s:sc});if(k>=3)break}});
   out.sort((a,b)=>b._s-a._s||cmp(a.text,b.text));const perEnd=new Map();
   out=out.filter(x=>{const k=perEnd.get(x.end)||0;if(k<4){perEnd.set(x.end,k+1);return true}return false});
   for(const x of[...items,...out])delete x._s;
@@ -220,7 +216,8 @@ const linePhones=toks=>phrasePhones(toks.slice(-4),guessPron)||[];
 function internal(toks){const ks=new Map();for(let t of toks){t=t.toLowerCase().replace(/^'+|'+$/g,"");if(LX().stop.has(t)||t.length<2)continue;
   for(const k of wordInfo(t).keys.slice(0,1)){const kk=k.split("AO").join("AA");if(!ks.has(kk))ks.set(kk,new Set());ks.get(kk).add(t)}}
   let n=0;for(const v of ks.values())if(v.size>1)n+=v.size-1;return n}
-function rankLines(line,lines,keep=8){if(typeof line!=="string"||!line.trim())throw new RangeError("missing line");
+function rankLines(line,lines,keep=8,sense=null){if(typeof line!=="string"||!line.trim())throw new RangeError("missing line");
+  if(sense!=null&&!(Array.isArray(sense)&&Array.isArray(lines)&&sense.length===lines.length&&sense.every(x=>typeof x==="number"&&x>=0&&x<=10)))throw new RangeError("invalid sense");
   if(!Array.isArray(lines)||lines.length>40||!lines.every(x=>typeof x==="string"&&x.length<=200))throw new RangeError("invalid lines");
   if(line.length>200)throw new RangeError("line too long");
   const src=analyzeText(line.trim()).lines[0];if(!src.words.length)throw new RangeError("line has no words");
@@ -229,7 +226,7 @@ function rankLines(line,lines,keep=8){if(typeof line!=="string"||!line.trim())th
   const sv=stressedVowels(end),stoks=line.match(TOKEN)||[],sph=linePhones(stoks),ep=prons(end)[0],tailV=ep.length?tailVowels(ep[0]):1;
   const qa=WORD_RE.test(end)?aquery(end):null,evs=qa?svowelsPh(ep):[];
   const out=lines.map((text,i)=>{const a=text.trim()?analyzeText(text.trim()).lines[0]:{words:[]};
-    if(!a.words.length)return{text,end:null,tier:"none",syllables:0,syllable_diff:src.syllables,multi:0,internal:0,filler:false,cliche:false,assoc:null,score:0,_i:i};
+    if(!a.words.length)return{text,end:null,tier:"none",syllables:0,syllable_diff:src.syllables,multi:0,internal:0,filler:false,cliche:false,assoc:null,sense:null,score:0,_i:i};
     const e=a.end;let t;if(e===end)t="repeat";else if(tiers.has(e))t=tiers.get(e);else if(wordInfo(e).keys.some(k=>ew.keys.includes(k)))t="perfect";
     else if([...stressedVowels(e)].some(v=>sv.has(v)))t="assonant";else t="none";
     const toks=text.match(TOKEN)||[],filler=LX().filler.has(e)&&!LX().filler.has(end);
@@ -238,12 +235,12 @@ function rankLines(line,lines,keep=8){if(typeof line!=="string"||!line.trim())th
     const inl=internal([...toks.slice(0,-1),e]),sd=Math.abs(a.syllables-src.syllables),low=" "+toks.map(x=>x.toLowerCase()).join(" ")+" ";
     const cliche=LX().cliches.some(c=>low.includes(" "+c+" "));
     let sc=TIER_BASE[t]*(filler?0.35:1);if(t!=="none"&&t!=="repeat"&&!filler)sc+=Math.min(20,10*multi);
-    sc+=Math.min(12,4*inl);sc+=sd===0?13:sd===1?10:sd===2?4:-8*(sd-2);if(cliche)sc-=15;if(parrot)sc-=10;if(toks.length<3)sc-=10;
+    sc+=Math.min(12,4*inl);sc+=sd===0?13:sd===1?10:sd===2?4:-8*(sd-2);if(cliche)sc-=15;if(parrot)sc-=10;if(toks.length>=2&&DETS.has(toks[toks.length-2].toLowerCase())&&W.info.has(e)&&W.info.get(e).pos.length&&!W.info.get(e).pos.includes("n"))sc-=20;if(!filler&&LX().stop.has(e)&&!LX().particles.has(e)&&!LX().stop.has(end))sc-=15;if(toks.length<3)sc-=10;
     const ef=W.info.has(e)?W.info.get(e).freq:0;if(t!=="none"&&t!=="repeat")sc-=ef<3?12:ef<3.5?6:0;
     let coh=null;if(qa&&["perfect","near","slant","assonant"].includes(t)){for(const v of evs){const hit=alookup(v,e);if(hit){coh=cos(qa[0],qa[1],hit[0],hit[1]);break}}
       if(coh!==null)sc+=coh>=0.3?6:coh>=0.18?3:coh<0.06?-6:0}
-    sc+=Math.max(0,6-Math.floor(i/4));
-    return{text:text.trim(),end:e,tier:t,syllables:a.syllables,syllable_diff:sd,multi,internal:inl,filler,cliche,assoc:coh===null?null:r3(coh),score:Math.max(0,Math.min(100,Math.round(sc))),_i:i}});
+    sc+=Math.max(0,6-Math.floor(i/4));let sn=null;if(sense!=null&&t!=="none"&&t!=="repeat"){sn=pyRound(sense[i]);sc+=Math.max(-30,Math.min(20,(sn-6)*5))}
+    return{text:text.trim(),end:e,tier:t,syllables:a.syllables,syllable_diff:sd,multi,internal:inl,filler,cliche,assoc:coh===null?null:r3(coh),sense:sn,score:Math.max(0,Math.min(100,pyRound(sc))),_i:i}});
   out.sort((a,b)=>b.score-a.score||a._i-b._i);const ends=new Map(),bags=[];
   for(const x of out){if(x.end===null)continue;const bag=new Set((x.text.match(TOKEN)||[]).map(t=>t.toLowerCase()).filter(t=>!LX().stop.has(t)));let pen=0;
     if(ends.get(x.end))pen+=15*ends.get(x.end);
@@ -276,7 +273,7 @@ window.fetch=async(input,init)=>{const url=new URL(typeof input==="string"?input
       if(p.startsWith("/api/ai/"))return realFetch(input,init);
       const guard=f=>{try{return[200,f()]}catch(e){if(e instanceof RangeError)return[400,{error:e.message}];throw e}};
       if(p==="/api/verify")r=b&&typeof b==="object"?guard(()=>verify(b.word,b.items)):[400,{error:"body must be an object"}];else
-      if(p==="/api/rank_lines")r=b&&typeof b==="object"?(()=>{try{return[200,rankLines(b.line,b.lines)]}catch(e){if(e instanceof RangeError)return[400,{error:e.message}];throw e}})():[400,{error:"body must be an object"}];
+      if(p==="/api/rank_lines")r=b&&typeof b==="object"?(()=>{try{return[200,rankLines(b.line,b.lines,8,b.sense==null?null:b.sense)]}catch(e){if(e instanceof RangeError)return[400,{error:e.message}];throw e}})():[400,{error:"body must be an object"}];
       else if(p!=="/api/analyze")r=[404,{error:"not found"}];
       else r=b&&typeof b.text==="string"?(()=>{try{return[200,analyzeText(b.text)]}catch(e){return[400,{error:e.message}]}})():[400,{error:"missing 'text'"}]}
     else r=p==="/api/related"?related(url.searchParams):p==="/api/themes"?themesList():p==="/api/analyze"?analyze(url.searchParams):p==="/api/line"?lineHelp(url.searchParams):p==="/api/rhymes"?rhymes(url.searchParams):p==="/api/suggest"?suggest(url.searchParams):p==="/api/health"?[200,{ok:true,words:W.words.length}]:[404,{error:"not found"}]}

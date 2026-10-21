@@ -111,3 +111,14 @@ def test_echo_words(engine):
 def test_rank_parrot_penalty(engine):
     r = {x["text"]: x for x in engine.rank_lines("walking through the falling snow", ["hours pass by like falling dough", "hours pass by like drifting dough"])["lines"]}
     assert r["hours pass by like falling dough"]["multi"] == 0 and r["hours pass by like falling dough"]["score"] < r["hours pass by like drifting dough"]["score"]
+
+def test_rank_sense_and_grammar(engine):
+    line = "my heart is beating like a drum"
+    c = ["got my fingers snapping to the succumb", "till the feeling in my chest goes numb", "the crowd is cheering waiting for some"]
+    r = {x["text"]: x for x in engine.rank_lines(line, c, sense=[9, 9, 9])["lines"]}
+    assert r[c[1]]["score"] > r[c[0]]["score"] and r[c[1]]["score"] > r[c[2]]["score"]   # "the succumb" (verb after "the"), dangling "some"
+    hi = engine.rank_lines(line, c, sense=[10, 10, 10])["lines"]; lo = engine.rank_lines(line, c, sense=[0, 0, 0])["lines"]
+    assert all(a["score"] > b["score"] for a, b in zip(sorted(hi, key=lambda x: x["text"]), sorted(lo, key=lambda x: x["text"])))
+    assert {x["sense"] for x in hi} == {10}
+    for bad in ([1, 2], [11, 0, 0], ["a", 1, 1], [True, 1, 1]):
+        with pytest.raises(ValueError): engine.rank_lines(line, c, sense=bad)

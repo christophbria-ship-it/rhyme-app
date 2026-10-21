@@ -1,8 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import worker, { parseLines, parseBrainstorm, validate, validateBrainstorm, buildMessages, buildBrainstorm, lastWord, modelText, _resetRate, corsHeaders } from "../src/index.js";
+import worker, { parseLines, parseBrainstorm, validate, validateBrainstorm, buildMessages, buildBrainstorm, lastWord, modelText, parseJudge, _resetRate, corsHeaders } from "../src/index.js";
 const ORIGIN = "https://christophbria-ship-it.github.io";
-const env = (resp, opts = {}) => { const e = { ...opts, calls: 0 }; e.AI = { run: async (model, input) => { e.calls++; e.last = { model, input }; if (resp instanceof Error) throw resp; return typeof resp === "object" ? resp : { response: resp }; } }; return e; };
+const env = (resp, opts = {}) => { const e = { ...opts, calls: 0 }; e.inputs = []; e.AI = { run: async (model, input) => { e.calls++; e.inputs.push({ model, input }); e.last = e.inputs[0];
+  if (/strict, experienced lyric editor/.test(input.messages[0].content)) { const n = (input.messages[1].content.match(/^\d+\. /gm) || []).length; return { response: JSON.stringify(Array.from({ length: n }, (_, i) => 9 - i)) }; } if (resp instanceof Error) throw resp; return typeof resp === "object" ? resp : { response: resp }; } }; return e; };
 const req = (body, { origin = ORIGIN, method = "POST", path = "/lines", ip = "1.1.1.1" } = {}) =>
   new Request("https://rhymer-ai.example.workers.dev" + path, { method, headers: { "Content-Type": "application/json", ...(origin ? { Origin: origin } : {}), "CF-Connecting-IP": ip },
     body: method === "POST" ? (typeof body === "string" ? body : JSON.stringify(body)) : undefined });
@@ -16,16 +17,18 @@ test("happy path returns cleaned, deduped lines with CORS for the Pages origin; 
   assert.equal(r.status, 200); assert.equal(r.headers.get("Access-Control-Allow-Origin"), ORIGIN); assert.equal(r.headers.get("Cache-Control"), "no-store");
   const d = await r.json(); assert.deepEqual(d.lines, ["The world is hushed and white below", "Our footprints fading as we go", "I feel the winter wind blow", "Your hand in mine, the embers glow"]);
   const u = e.last.input.messages[1].content;
-  assert.match(u, /truly rhymes with "snow"/); assert.match(u, /8 syllables \(±1\)/); assert.match(u, /multi-syllable rhymes .* "falling snow"/);
+  assert.match(u, /truly rhymes with "snow"/); assert.match(u, /HARD LIMIT 7-9 syllables/); assert.match(u, /multi-syllable rhymes .* "falling snow"/);
   assert.match(u, /glow, go/); assert.match(u, /love/); assert.match(u, /calling, crawling/); assert.match(u, /DUM-da DUM/); assert.match(u, /Never end on filler/);
   assert.match(u, /Write 24 different/); assert.equal(e.last.model, "@cf/meta/llama-3.3-70b-instruct-fp8-fast");
+  assert.deepEqual(d.sense, [9, 8, 7, 6]); assert.equal(e.calls, 2);   // editor pass scores every candidate
+  const e2 = env(LINES); await worker.fetch(req({ line: "walking through snow again", judge: false }), e2); assert.equal(e2.calls, 1);
 });
 test("GET ?q= is cacheable (Workers Cache) and repeats are served from the in-isolate memo without calling the model", async () => {
   _resetRate(); const e = env(LINES);
   const r1 = await worker.fetch(get("/lines", { line: "walking through the falling snow", count: 12 }), e);
   assert.equal(r1.status, 200); assert.match(r1.headers.get("Cache-Control"), /public, max-age=604800/);
   const r2 = await worker.fetch(get("/lines", { line: "walking through the falling snow", count: 12 }), e);
-  assert.equal((await r2.json()).cached, true); assert.equal(e.calls, 1);
+  assert.equal((await r2.json()).cached, true); assert.equal(e.calls, 2);
   assert.equal((await worker.fetch(req(null, { method: "GET" }), e)).status, 405);
   const bad = await worker.fetch(get("/lines", { line: "" }), e); assert.equal(bad.status, 400); assert.equal(bad.headers.get("Cache-Control"), "no-store");
 });
@@ -55,7 +58,7 @@ test("input validation and caps", async () => {
   for (const [b, code] of [[{}, 400], [{ line: "" }, 400], [{ line: "x".repeat(201) }, 400], [{ line: "a", mood: "bogus" }, 400],
     [{ line: "a", count: 31 }, 400], [{ line: "a", rhymes: ["<script>"] }, 400], [{ line: "a", context: "x".repeat(601) }, 400], ["not json", 400],
     [{ line: "a", exclude: Array(61).fill("x") }, 400], [{ line: "a", rhythm: "<x>" }, 400], [{ line: "a", echo: { word: "x", words: ["<"] } }, 400],
-    [{ line: "a", seed: 5000 }, 400], ["x".repeat(13000), 413]])
+    [{ line: "a", seed: 5000 }, 400], [{ line: "a", judge: "yes" }, 400], ["x".repeat(13000), 413]])
     assert.equal((await worker.fetch(req(b, { ip: "9.9.9." + code + Math.random() }), env(LINES))).status, code, JSON.stringify(b).slice(0, 40));
   assert.equal((await worker.fetch(req(null, { method: "GET", path: "/health" }), env(LINES))).status, 200);
   assert.equal((await worker.fetch(req(null, { method: "GET", path: "/nope" }), env(LINES))).status, 404);
@@ -83,5 +86,6 @@ test("parsers and model output shapes", () => {
   assert.equal(buildMessages({ line: "hi there" }).length, 2); assert.equal(buildBrainstorm({ word: "snow" }).length, 2);
   assert.equal(modelText({ choices: [{ message: { content: "[\"a\"]" } }] }), "[\"a\"]");
   assert.equal(modelText({ output: [{ content: [{ type: "output_text", text: "hi" }] }] }), "hi");
+  assert.deepEqual(parseJudge("scores: [7, 11, -2]", 3), [7, 10, 0]); assert.equal(parseJudge("[1,2]", 3), null); assert.equal(parseJudge("nope", 1), null);
   assert.deepEqual(parseBrainstorm('{"perfect":["a b c d e f g"]}', "x").perfect, []);
 });

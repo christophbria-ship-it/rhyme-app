@@ -33,7 +33,7 @@ class H(BaseHTTPRequestHandler):
             if path.startswith("/api/ai/"): return self.ai_proxy(raw, path.rsplit("/", 1)[1])
             body = json.loads(raw)
             if not isinstance(body, dict): return self.send(400, {"error": "body must be an object"})
-            if path == "/api/rank_lines": return self.send(200, ENGINE.rank_lines(body.get("line"), body.get("lines")))
+            if path == "/api/rank_lines": return self.send(200, ENGINE.rank_lines(body.get("line"), body.get("lines"), sense=body.get("sense")))
             if path == "/api/verify": return self.send(200, ENGINE.verify(body.get("word") or "", body.get("items")))
             if not isinstance(body.get("text"), str): return self.send(400, {"error": "missing 'text'"})
             return self.send(200, ENGINE.analyze(body["text"]))

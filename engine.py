@@ -195,6 +195,7 @@ them their be am are was were if so that this than then do does did not no can w
 it's don't can't won't ain't you're we're they're im""".split())
 PARTICLES = set("up down out in on off away back over around through along apart aside by".split())
 FILLER = set("though tho so too oh ooh yeah yea uh huh it that this then and but or the a an to of just anyway somehow indeed".split())
+DETS = {"the", "a", "an", "my", "your", "his", "her", "our", "their", "this", "every", "each"}
 TIER_Q = {"perfect": 1.0, "near": 0.85, "slant": 0.7}
 ASSONANT_Q = 0.5
 REDUCED = {"AH", "IH", "UH"}
@@ -386,9 +387,11 @@ def _related(self, word, limit=300, min_freq=None, phrases=80):
     out, pseen = [], set()
     for v in _svowels_ph(cd["prons"]):
         for text, ph, src, vec, n in A.phrases(v):
-            if text in pseen: continue
+            if text in pseen or src == "cn": continue  # ConceptNet phrases were mostly junk ("cardiac part")
             toks = text.split()
-            if toks[-1] == w or _stem_clash(w, toks[-1]): continue
+            parts = text.replace("-", " ").split()
+            if any(x == w or _stem_clash(w, x) for x in parts): continue  # "quick-fire" repeats, doesn't rhyme
+            if any(len(x) == 1 and x not in ("a", "i") for x in parts): continue  # "e-thumb"
             t = tail_tier(qph, ph) if qph else None
             if t is None: continue
             vm = vowel_match(qph, ph)
@@ -396,22 +399,9 @@ def _related(self, word, limit=300, min_freq=None, phrases=80):
             a = _cos(qv, qn_, vec, n)
             if a < P_MIN: continue
             sc = a * TIER_Q.get(t, ASSONANT_Q) * SRC_W.get(src, 0.7) * (1.0 + 0.15 * max(0, vm - qtail_v))
+            if src == "wikt" and len(parts) == 2: sc *= 0.6  # two-word dictionary compounds ("side part") are rarely lyrical
             pseen.add(text)
             out.append({"text": text, "end": toks[-1], "tier": t, "source": src, "score": round(sc, 4), "_s": sc})
-    # adjective + rhyme compounds from the word's own neighbours ("white glow", "frozen flow")
-    mods = [c for c in gen if c in self.info and "adj" in self.info[c]["pos"] and not c.endswith("ing") and not _stem_clash(w, c)][:8]
-    ends = [x for x in items if x["group"] != "slant" and "n" in x["pos"] and x["tier"] in ("perfect", "near")][:24]
-    used = {}
-    for r, mword in enumerate(mods):
-        k = 0
-        for e in ends:
-            if used.get(e["word"], 0) >= 2 or _stem_clash(mword, e["word"]): continue
-            text = f"{mword} {e['word']}"
-            if text in pseen: continue
-            sc = e["_s"] * SRC_W["combo"] * (0.9 - 0.04 * r)
-            pseen.add(text); used[e["word"]] = used.get(e["word"], 0) + 1; k += 1
-            out.append({"text": text, "end": e["word"], "tier": e["tier"], "source": "combo", "score": round(sc, 4), "_s": sc})
-            if k >= 3: break
     out.sort(key=lambda x: (-x["_s"], x["text"]))
     per_end, kept = {}, []
     for x in out:  # variety: at most 4 phrases per ending word
@@ -500,8 +490,10 @@ def _internal(self, toks):
         for k in wi["keys"][:1]: ks.setdefault(k.replace("AO", "AA"), set()).add(t)
     return sum(len(v) - 1 for v in ks.values() if len(v) > 1)
 
-def _rank_lines(self, line, lines, keep=8):
+def _rank_lines(self, line, lines, keep=8, sense=None):
     if not isinstance(line, str) or not line.strip(): raise ValueError("missing line")
+    if sense is not None and not (isinstance(sense, list) and len(sense) == len(lines) and all(isinstance(x, (int, float)) and not isinstance(x, bool) and 0 <= x <= 10 for x in sense)):
+        raise ValueError("invalid sense")
     if not isinstance(lines, list) or len(lines) > 40 or not all(isinstance(x, str) and len(x) <= 200 for x in lines): raise ValueError("invalid lines")
     if len(line) > 200: raise ValueError("line too long")
     src = self.analyze(line.strip())["lines"][0]
@@ -523,7 +515,7 @@ def _rank_lines(self, line, lines, keep=8):
         a = self.analyze(text.strip())["lines"][0] if text.strip() else {"words": []}
         if not a["words"]:
             out.append({"text": text, "end": None, "tier": "none", "syllables": 0, "syllable_diff": src["syllables"], "multi": 0,
-                        "internal": 0, "filler": False, "cliche": False, "assoc": None, "score": 0, "_i": i}); continue
+                        "internal": 0, "filler": False, "cliche": False, "assoc": None, "sense": None, "score": 0, "_i": i}); continue
         e = a["end"]
         if e == end: t = "repeat"
         elif e in tiers: t = tiers[e]
@@ -547,6 +539,8 @@ def _rank_lines(self, line, lines, keep=8):
         sc += {0: 13, 1: 10, 2: 4}.get(sd, -8 * (sd - 2))
         if cliche: sc -= 15
         if parrot: sc -= 10
+        if len(toks) >= 2 and toks[-2].lower() in DETS and e in self.info and self.info[e]["pos"] and "n" not in self.info[e]["pos"]: sc -= 20  # "to the succumb"
+        if not filler and e in STOPWORDS and e not in PARTICLES and end not in STOPWORDS: sc -= 15  # dangling "from"/"them"/"some"
         if len(toks) < 3: sc -= 10
         ef = self.info[e]["freq"] if e in self.info else 0
         if t not in ("none", "repeat"): sc -= 12 if ef < 3.0 else 6 if ef < 3.5 else 0  # forced, obscure rhyme words
@@ -557,8 +551,11 @@ def _rank_lines(self, line, lines, keep=8):
                 if hit: coh = _cos(qa[0], qa[1], hit[0], hit[1]); break
             if coh is not None: sc += 6 if coh >= 0.3 else 3 if coh >= 0.18 else -6 if coh < 0.06 else 0  # does the rhyme word belong?
         sc += max(0, 6 - i // 4)  # the model lists its best ideas first
+        sn = None
+        if sense is not None and t not in ("none", "repeat"):
+            sn = round(sense[i]); sc += max(-30, min(20, (sn - 6) * 5))  # editor pass: does the line make sense / land naturally?
         out.append({"text": text.strip(), "end": e, "tier": t, "syllables": a["syllables"], "syllable_diff": sd, "multi": multi,
-                    "internal": internal, "filler": filler, "cliche": cliche, "assoc": round(coh, 3) if coh is not None else None,
+                    "internal": internal, "filler": filler, "cliche": cliche, "assoc": round(coh, 3) if coh is not None else None, "sense": sn,
                     "score": max(0, min(100, round(sc))), "_i": i})
     # variety: penalise reused end words and near-duplicate lines (bag of content words)
     out.sort(key=lambda x: (-x["score"], x["_i"]))

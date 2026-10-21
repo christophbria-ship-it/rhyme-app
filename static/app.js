@@ -105,14 +105,14 @@ $('#padDownload').addEventListener('click',()=>{const a=document.createElement('
 
 // ---------------- related rhymes card ("Related to my word") + AI brainstorm ----------------
 const TIERNAME={perfect:'perfect',near:'near',slant:'slant',assonant:'vowel match'};
-const AI_BASE=window.RHYMER_AI_BASE||(window.RHYMER_AI_URL?window.RHYMER_AI_URL.replace(/lines$/,''):'api/ai/');
+const AI_V='6e';const AI_BASE=window.RHYMER_AI_BASE||(window.RHYMER_AI_URL?window.RHYMER_AI_URL.replace(/lines$/,''):'api/ai/');
 const GROUPS=[['perfect','Perfect & near','Same ending sound'],['multi','Multi-syllable','Longer words and multi-syllable matches'],['slant','Slant & vowel','Shared vowel, close consonants'],['phrase','Phrases','Multi-word & compound rhymes — tap to copy']];
 const bsOn=()=>localStorage.getItem('rhymer-bs')!=='0';
 function lsGet(k,maxAge){try{const v=JSON.parse(localStorage.getItem(k));if(v&&Date.now()-v.t<maxAge)return v.d}catch(e){}return null}
 function lsSet(k,d){try{localStorage.setItem(k,JSON.stringify({t:Date.now(),d}))}catch(e){try{Object.keys(localStorage).filter(x=>x.startsWith('rhymer-c:')).slice(0,50).forEach(x=>localStorage.removeItem(x))}catch(_){}}}
-async function aiGet(kind,body,timeout=30000){const key='rhymer-c:'+kind+':'+JSON.stringify(body),hit=lsGet(key,30*864e5);if(hit)return{...hit,cached:true};
+async function aiGet(kind,body,timeout=30000){const key='rhymer-c:'+AI_V+kind+':'+JSON.stringify(body),hit=lsGet(key,30*864e5);if(hit)return{...hit,cached:true};
   if(navigator.onLine===false)throw new Error('offline');const ac=new AbortController(),to=setTimeout(()=>ac.abort(),timeout);
-  try{const q=JSON.stringify(body);const r=AI_BASE.startsWith('http')&&q.length<6000?await fetch(AI_BASE+kind+'?q='+encodeURIComponent(q),{signal:ac.signal}):
+  try{const q=JSON.stringify(body);const r=AI_BASE.startsWith('http')&&q.length<6000?await fetch(AI_BASE+kind+'?v='+AI_V+'&q='+encodeURIComponent(q),{signal:ac.signal}):
       await fetch(AI_BASE+kind,{method:'POST',headers:{'Content-Type':'application/json'},body:q,signal:ac.signal});
     let d;try{d=await r.json()}catch(e){d={}}if(!r.ok)throw new Error(d.error||('HTTP '+r.status));lsSet(key,d);return d}
   catch(e){throw e.name==='AbortError'?new Error('timed out'):e}finally{clearTimeout(to)}}
@@ -167,7 +167,7 @@ function makeAI(box,{getInput,onInsert}){
       rel=j.related.filter(x=>x.group!=='slant'&&x.freq>=3.8&&x.pos.length&&RHYME_HINT(x.word))}}catch(e){}
     const H=[],addH=w=>{if(H.length<10&&!H.includes(w)&&w!==d.end_word)H.push(w)};
     rel.filter(x=>x.tier==='perfect').slice(0,7).forEach(x=>addH(x.word));
-    d.suggestions.perfect.filter(x=>x.freq>=4.2&&RHYME_HINT(x.word)).sort((a,b)=>b.freq-a.freq).slice(0,12).forEach(x=>{if(H.length<8)addH(x.word)});
+    d.suggestions.perfect.filter(x=>x.freq>=4.2&&x.pos.length&&RHYME_HINT(x.word)).sort((a,b)=>b.freq-a.freq).slice(0,12).forEach(x=>{if(H.length<8)addH(x.word)});
     rel.forEach(x=>addH(x.word));d.hintWords=H;
     d.rhythm=(d.prev.words||[]).map(w=>[...w.stress].map(c=>c==='/'?'DUM':'da').join('-')).join(' ');return d}
   function fallback(msg,h){box.dataset.state='fallback';more.hidden=true;
@@ -175,9 +175,12 @@ function makeAI(box,{getInput,onInsert}){
     st.innerHTML=`<div class="note">AI unavailable (${esc(msg)}) — showing offline rhyme suggestions instead.</div>`+
       (ends.length?`<div class="words fb">${ends.map(x=>`<button type="button" class="w fbw" data-copy="${esc(x.word)}">${esc(x.word)}<sup>${x.syllables}</sup></button>`).join('')}</div>`:'')}
   function row(x){const det=[x.multi?`×${x.multi+1} multi`:'',x.internal?`${x.internal} internal`:''].filter(Boolean);
-    return `<li class="ail t-${x.tier}"><span class="sc s-${scoreCls(x.score)}" title="Rhyme & rhythm score: end-rhyme strength, multi-syllable match, internal rhymes, syllable fit, freshness">${x.score}</span><span class="tb t-${x.tier}">${x.tier==='assonant'?'vowel':x.tier}</span>${det.map(t=>`<span class="tb tx">${t}</span>`).join('')}<span class="txt">${esc(x.text)}</span><span class="syl" title="syllables">${x.syllables} syl</span>
+    return `<li class="ail t-${x.tier}"><span class="sc s-${scoreCls(x.score)}" title="Line score: end-rhyme strength, multi-syllable match, internal rhymes, syllable fit, freshness${x.sense!=null?', editor sense '+x.sense+'/10':''}">${x.score}</span><span class="tb t-${x.tier}">${x.tier==='assonant'?'vowel':x.tier}</span>${det.map(t=>`<span class="tb tx">${t}</span>`).join('')}<span class="txt">${esc(x.text)}</span><span class="syl" title="syllables">${x.syllables} syl</span>
       <button type="button" class="ghost cp" data-copy="${esc(x.text)}" aria-label="Copy line">Copy</button>${onInsert?`<button type="button" class="ghost ins" data-t="${esc(x.text)}">Insert</button>`:''}</li>`}
-  async function rank(line,lines){const rr=await fetch('api/rank_lines',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({line,lines:lines.slice(0,40).map(s=>String(s).slice(0,200)),keep:40})});
+  const senseOf=new Map();
+  async function rank(line,lines){lines=lines.slice(0,40).map(s=>String(s).slice(0,200));const body={line,lines,keep:40};
+    if(lines.some(t=>senseOf.has(t)))body.sense=lines.map(t=>senseOf.has(t)?senseOf.get(t):6);
+    const rr=await fetch('api/rank_lines',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     if(!rr.ok)return lines.map(t=>({text:t,tier:'none',syllables:0,score:0,multi:0,internal:0}));return(await rr.json()).lines}
   function showNext(){const fresh=pool.filter(x=>!shownTexts.has(x.text)&&x.tier!=='none'&&x.score>=35).slice(0,8);fresh.forEach(x=>shownTexts.add(x.text));
     list.insertAdjacentHTML('beforeend',fresh.map(row).join(''));return fresh.length}
@@ -195,6 +198,7 @@ function makeAI(box,{getInput,onInsert}){
       if(inp.context)body.context=inp.context.slice(-600);
       const d=await aiGet('lines',body,45000);seed++;
       if(!Array.isArray(d.lines)||!d.lines.length)throw new Error('no lines returned');
+      if(Array.isArray(d.sense)&&d.sense.length===d.lines.length)d.lines.forEach((t,k)=>{const v=+d.sense[k];if(v>=0&&v<=10)senseOf.set(String(t).slice(0,200),v)});
       stats.cands+=d.lines.length;stats.model=d.model||stats.model;
       const known=new Set(pool.map(x=>x.text.toLowerCase()));const add=d.lines.filter(t=>!known.has(String(t).toLowerCase()));
       const ranked=await rank(line,[...pool.filter(x=>!shownTexts.has(x.text)).map(x=>x.text),...add].slice(0,40));

@@ -49,6 +49,7 @@ export function validate(b) {
   if (b.rhymes != null && !(isStrArr(b.rhymes, LIMITS.rhymes, 40) && b.rhymes.every(w => /^[a-z][a-z' \-]{0,39}$/.test(w)))) return "invalid 'rhymes'";
   if (b.exclude != null && !isStrArr(b.exclude, LIMITS.exclude, LIMITS.excludeLen)) return "invalid 'exclude'";
   if (b.seed != null && !(Number.isInteger(b.seed) && b.seed >= 0 && b.seed < 1000)) return "invalid 'seed'";
+  if (b.judge != null && typeof b.judge !== "boolean") return "invalid 'judge'";
   if (b.rhythm != null && !(typeof b.rhythm === "string" && /^[A-Za-z \-]{1,160}$/.test(b.rhythm))) return "invalid 'rhythm'";
   if (b.echo != null && !(b.echo && typeof b.echo === "object" && typeof b.echo.word === "string" && WORD.test(b.echo.word) &&
       isStrArr(b.echo.words, 16, 24) && b.echo.words.every(w => WORD.test(w)))) return "invalid 'echo'";
@@ -69,7 +70,7 @@ const CLICHES = "heart of gold, deep inside, end of time, set me free, shining s
 export function buildMessages(b) {
   const n = b.count || 6, end = b.end_word || lastWord(b.line), tail2 = tailWords(b.line, 2);
   const mood = b.mood && b.mood !== "any" && b.mood !== "related" ? `\nMood / theme: ${b.mood}.` : "";
-  const syl = (b.syllables ? `${b.syllables} syllables (±1) — count them` : "the same number of syllables as the previous line (±1)") +
+  const syl = (b.syllables ? `HARD LIMIT ${Math.max(1, b.syllables - 1)}-${b.syllables + 1} syllables per line (the previous line has ${b.syllables}) — count them; longer lines are thrown away` : "the same number of syllables as the previous line (±1)") +
     (b.rhythm ? `; the previous line's stress pattern is ${b.rhythm}, so mirror its beat` : "");
   const hints = b.rhymes && b.rhymes.length ? `\nTrue rhymes for "${end}" that fit the theme (use only if they make sense, or find better ones): ${b.rhymes.join(", ")}.` : "";
   const echo = b.echo && b.echo.words && b.echo.words.length ? `\nWords with the same vowel sounds as "${b.echo.word}" — use them to build a multi-syllable rhyme on "${b.echo.word} ${end}" (e.g. "${b.echo.words[0]} <rhyme for ${end}>") or internal rhymes: ${b.echo.words.join(", ")}.` : "";
@@ -78,17 +79,39 @@ export function buildMessages(b) {
   return [
     { role: "system", content: "You are a hit songwriter and rap ghostwriter writing lyrics for Suno AI songs (pop, hip-hop, R&B, rock, country). " +
       "Your lines are singable, concrete and fresh: vivid images, specific nouns, strong verbs, internal rhymes and multi-syllable end rhymes " +
-      "like the best writers. You never explain; you output only JSON." },
+      "like the best writers. The standard you write to (previous line -> next line):\n" +
+      "\"I was raised behind a broken door\" -> \"slept through thunder on the kitchen floor\"\n" +
+      "\"city lights are fading out of view\" -> \"every highway sign points back to you\"\n" +
+      "\"we were dancing in the rain\" -> \"laughing at the hurricane\"\n" +
+      "Every line is a complete, natural sentence a listener understands on first hearing. You never explain; you output only JSON." },
     { role: "user", content: `Previous lyric line: "${b.line.trim()}"${ctx}${mood}\n\nWrite ${n} different candidate NEXT lines.\n` +
       `1. END RHYME (most important): every line must END on a word or phrase that truly rhymes with "${end}" (same stressed vowel AND same ending sound). ` +
       `Best of all: multi-syllable rhymes that echo the vowel sounds of the last syllables "${tail2}" vowel for vowel. ` +
       `Never end on filler (though, so, too, oh, yeah, it, now, then), never end on "${end}" itself, and don't reuse an end word. ` +
-      `Never force a rhyme: every line must make sense and sound like something a real artist would sing.\n` +
+      `Never force a rhyme: every line must make sense and sound like something a real artist would sing. ` +
+      `Work backwards: choose a strong rhyme word or phrase first, then build the whole line so it lands there naturally and grammatically ` +
+      `(a noun after "the/a/my", a verb where a verb belongs; e.g. for "drum": "till the feeling in my chest goes numb" — never nonsense like "snapping to the succumb").\n` +
       `2. RHYTHM: ${syl}, natural stress, easy to sing.\n` +
       `3. CRAFT: concrete imagery (sights, sounds, textures, places, objects), active verbs, an internal rhyme or assonance chain where it flows. ` +
       `No clichés (${CLICHES}).\n4. VARIETY: mix angles — a story detail, a feeling, an image, a punchline or twist. No two lines alike.${hints}${echo}${avoid}\n\n` +
       `Reply with ONLY a JSON array of ${n} strings.` },
   ];
+}
+export function buildJudge(b, lines) {
+  return [
+    { role: "system", content: "You are a strict, experienced lyric editor at a major label. You output only JSON." },
+    { role: "user", content: `Previous lyric line: "${b.line.trim()}"\nCandidate next lines:\n${lines.map((l, i) => `${i + 1}. ${l}`).join("\n")}\n\n` +
+      `Score each candidate 0-10 as a next line a top songwriter would keep. Be harsh: most candidates deserve 3-6; 9-10 only for lines good enough for a hit record. ` +
+      `Check: it makes literal or poetic sense, grammar is natural (no missing words, no odd word order), ` +
+      `the final rhyme word lands naturally (forced, odd or nonsense rhyme words like "kneading bread with hands of dough" score 0-3), ` +
+      `vivid and fresh imagery scores higher, clichés lower. Reply with ONLY a JSON array of ${lines.length} integers in the same order.` },
+  ];
+}
+export function parseJudge(text, n) {
+  const m = String(text || "").match(/\[[\s\S]*?\]/); if (!m) return null;
+  let a; try { a = JSON.parse(m[0]); } catch (e) { return null; }
+  if (!Array.isArray(a) || a.length !== n || !a.every(x => typeof x === "number" && isFinite(x))) return null;
+  return a.map(x => Math.max(0, Math.min(10, Math.round(x))));
 }
 export function buildBrainstorm(b) {
   const mood = b.mood && b.mood !== "any" && b.mood !== "related" ? ` Mood / theme: ${b.mood}.` : "";
@@ -193,6 +216,10 @@ export default {
         const lines = parseLines(text, b.line, b.exclude || []);
         if (!lines.length) return json(502, { error: "model returned no usable lines" }, h);
         body = { lines, model };
+        // editor pass: the model is a better judge than writer — score sense / naturalness of every candidate (cheap: ~4 tokens per line)
+        if (b.judge !== false && lines.length >= 2) {
+          try { const sense = parseJudge(await runModel(env, model, buildJudge(b, lines), 20 + 5 * lines.length, 0), lines.length); if (sense) body.sense = sense; } catch (e) { /* non-fatal */ }
+        }
       } else {
         const text = await runModel(env, model, buildBrainstorm(b), 1400, 0.7);
         const r = parseBrainstorm(text, b.word);
