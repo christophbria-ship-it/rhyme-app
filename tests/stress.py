@@ -1,6 +1,6 @@
 """Stress: 10k engine lookups (cold + warm) and 2k HTTP lookups at 16 concurrency against a separate
 multi-worker server process; latency percentiles + memory."""
-import sys, os, time, random, resource, statistics, subprocess, urllib.request, json
+import urllib.error, sys, os, time, random, resource, statistics, subprocess, urllib.request, json
 from concurrent.futures import ThreadPoolExecutor
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__))); sys.path.insert(0, ROOT)
 def pct(xs, p): xs = sorted(xs); return xs[min(len(xs) - 1, int(len(xs) * p / 100))]
@@ -45,8 +45,17 @@ with ThreadPoolExecutor(16) as ex: hl = list(ex.map(hit, words))
 h95, h99 = rep("HTTP 2k lookups, 16 concurrent, cold", hl); print(f"  throughput={len(words)/(time.perf_counter()-t):.0f} req/s")
 with ThreadPoolExecutor(16) as ex: hl2 = list(ex.map(hit, words))
 rep("HTTP 2k lookups, 16 concurrent, warm", hl2)
+def hit_rel(w):
+    s = time.perf_counter()
+    try: urllib.request.urlopen(f"{base}/api/related?word={w}&limit=300&phrases=120").read()
+    except urllib.error.HTTPError: pass
+    return (time.perf_counter() - s) * 1000
+rel_words = [w for w in words if e.info.get(w, {}).get("freq", 0) >= 4][:500]
+t = time.perf_counter()
+with ThreadPoolExecutor(16) as ex: rl = list(ex.map(hit_rel, rel_words))
+r95, r99 = rep(f"HTTP {len(rel_words)} related (300 words + phrases), 16 concurrent", rl); print(f"  throughput={len(rel_words)/(time.perf_counter()-t):.0f} req/s")
 kids = subprocess.run(["pgrep", "-P", str(srv.pid)], capture_output=True, text=True).stdout.split()
 print(f"  server memory: master RSS={rss_mb(srv.pid):.0f} MB; workers={len(kids)}, RSS each≈{max([rss_mb(k) for k in kids] or [0]):.0f} MB, total PSS={pss_mb(srv.pid)+sum(pss_mb(k) for k in kids):.0f} MB")
 srv.terminate(); srv.wait()
-ok = c95 < 50 and h99 < 200
-print("STRESS", "PASS" if ok else "FAIL", f"(criteria: engine p95<50ms, HTTP cold p99<200ms)"); sys.exit(0 if ok else 1)
+ok = c95 < 50 and h99 < 200 and r95 < 1000
+print("STRESS", "PASS" if ok else "FAIL", f"(criteria: engine p95<50ms, HTTP cold p99<200ms, related p95<1000ms at 16 concurrent)"); sys.exit(0 if ok else 1)

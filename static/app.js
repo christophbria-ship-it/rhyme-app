@@ -105,7 +105,7 @@ $('#padDownload').addEventListener('click',()=>{const a=document.createElement('
 
 // ---------------- related rhymes card ("Related to my word") + AI brainstorm ----------------
 const TIERNAME={perfect:'perfect',near:'near',slant:'slant',assonant:'vowel match'};
-const AI_V='6e';const AI_BASE=window.RHYMER_AI_BASE||(window.RHYMER_AI_URL?window.RHYMER_AI_URL.replace(/lines$/,''):'api/ai/');
+const AI_V='6f';const AI_BASE=window.RHYMER_AI_BASE||(window.RHYMER_AI_URL?window.RHYMER_AI_URL.replace(/lines$/,''):'api/ai/');
 const GROUPS=[['perfect','Perfect & near','Same ending sound'],['multi','Multi-syllable','Longer words and multi-syllable matches'],['slant','Slant & vowel','Shared vowel, close consonants'],['phrase','Phrases','Multi-word & compound rhymes — tap to copy']];
 const bsOn=()=>localStorage.getItem('rhymer-bs')!=='0';
 function lsGet(k,maxAge){try{const v=JSON.parse(localStorage.getItem(k));if(v&&Date.now()-v.t<maxAge)return v.d}catch(e){}return null}
@@ -119,6 +119,7 @@ async function aiGet(kind,body,timeout=30000){const key='rhymer-c:'+AI_V+kind+':
 function chip(x,ai){const t=x.tier,sym=t==='perfect'?'●':t==='near'?'◐':'○';
   return `<span class="w rel t-${t}${x.conf&&x.conf!=='dict'?' gen':''}${ai?' ai':''}" data-w="${esc(x.word)}" title="${esc(TIERNAME[t]+(x.assoc!=null?' · association '+x.assoc:'')+(x.matched>1?' · '+x.matched+' syllables match':'')+(ai?' · AI brainstorm, verified':''))}">${esc(x.word)}<sup>${ai?'✨':sym}${x.matched>1?'×'+x.matched:''}</sup></span>`}
 function phraseBtn(p,ai){return `<button type="button" class="phrase t-${p.tier}${ai?' ai':''}" data-copy="${esc(p.text)}" title="${esc(TIERNAME[p.tier]+(p.source?' · '+({ai:'lyric bank',wikt:'idiom',cn:'ConceptNet',combo:'word combo'}[p.source]||p.source):'')+(ai?' · AI brainstorm, verified':''))}">${esc(p.text)}${ai?' ✨':''}</button>`}
+const REL_CAP={perfect:30,multi:24,slant:30,phrase:16},relOpen=new Set();
 function renderRel(slot,d,bs){const g={perfect:[],multi:[],slant:[],phrase:[]},seen=new Set();
   d.related.forEach(x=>{g[x.group].push(chip(x,false));seen.add(x.word)});d.phrases.forEach(p=>{g.phrase.push(phraseBtn(p,false));seen.add(p.text)});
   let added=0;if(bs&&bs.items)bs.items.forEach(x=>{if(seen.has(x.text))return;seen.add(x.text);added++;
@@ -128,7 +129,10 @@ function renderRel(slot,d,bs){const g={perfect:[],multi:[],slant:[],phrase:[]},s
   slot.innerHTML=`<section class="card relcard" id="relCard" data-bs="${bsState}"><div class="relhead"><h2 class="ptitle">Related to “${esc(d.word)}” <span class="badge b-perfect" id="relTotal">${total}</span></h2>
     <label class="chk bschk"><input type="checkbox" id="bsToggle"${bsOn()?' checked':''}> ✨ AI brainstorm</label></div>
     <p class="hint">Rhymes connected to your word's meaning, strongest first · ● perfect ◐ near ○ slant/vowel · ×2 = multi-syllable match${bsState==='done'?` · <span class="bsnote">✨ ${added} more from AI${bs.model?' ('+esc(bs.model.split('/').pop())+')':''}, verified by the rhyme engine</span>`:bsState==='loading'?' · <span class="bsnote"><span class="spinner"></span>AI brainstorming…</span>':bsState==='error'?` · <span class="bsnote">AI brainstorm unavailable (${esc(bs.error)})</span>`:''}</p>
-    ${GROUPS.map(([k,t,desc])=>g[k].length?`<div class="relgroup" data-group="${k}"><h3 class="subh">${t} <span class="cnt">${g[k].length}</span> <small>${desc}</small></h3><div class="words${k==='phrase'?' phrases':''}">${g[k].join('')}</div></div>`:'').join('')}</section>`;
+    ${GROUPS.map(([k,t,desc])=>{const n=g[k].length,cap=REL_CAP[k];if(!n)return'';const open=relOpen.has(k);
+      return `<div class="relgroup${open?' open':''}" data-group="${k}"><h3 class="subh">${t} <span class="cnt">${n}</span> <small>${desc}</small></h3><div class="words${k==='phrase'?' phrases':''}">${g[k].map((h,i)=>i<cap?h:h.replace(/^<(span|button) class="/,'<$1 class="xtra ')).join('')}</div>${n>cap?`<button type="button" class="ghost relmore" data-g="${k}" aria-expanded="${open}">${open?'Show fewer':`Show all ${n}`}</button>`:''}</div>`}).join('')}</section>`;
+  slot.querySelectorAll('.relmore').forEach(b=>b.addEventListener('click',()=>{const k=b.dataset.g,grp=b.parentElement,o=!grp.classList.contains('open');
+    grp.classList.toggle('open',o);o?relOpen.add(k):relOpen.delete(k);b.setAttribute('aria-expanded',o);b.textContent=o?'Show fewer':`Show all ${g[k].length}`}));
   slot.querySelector('#bsToggle').addEventListener('change',e=>{localStorage.setItem('rhymer-bs',e.target.checked?'1':'0');loadRelated(d.word)})}
 async function brainstorm(word){
   const d=await aiGet('brainstorm',{word},40000);

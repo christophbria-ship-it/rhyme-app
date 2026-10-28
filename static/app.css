@@ -143,3 +143,5 @@ button.aibtn:hover{background:linear-gradient(135deg,#A4652B,#5F2F15)}
 .tb.tx{background:#F6EDE1;color:#7A3E1D;text-transform:none;letter-spacing:0}
 #density b{color:var(--copper)}
 @media (max-width:600px){.ail .sc{order:0}.ail .tb.tx{order:1}}
+.relgroup:not(.open) .xtra{display:none}
+.relmore{margin-top:8px;padding:5px 12px;font-size:.84rem}

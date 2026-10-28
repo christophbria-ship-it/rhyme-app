@@ -34,17 +34,66 @@ The service worker precaches the app shell + all data shards (works offline); it
 - **Lyrics pad**: a notebook-style editor with live per-line syllable counts, rhyme-scheme letters (solid = perfect/repeat, dashed = near rhyme; letters restart each stanza), autosave to localStorage, copy/download/clear, and click-an-end-word to look up rhymes. API: `GET /api/analyze?text=` or `POST /api/analyze {"text": ...}`.
 All three work in the static/offline PWA build too (same logic ported to `api-shim.js`, parity-tested).
 
-## Related rhymes (v4)
+## Related rhymes (v6)
 
-The default theme mode is now **"Related to my word"**. A search for *snow* brings up words that are both associated with it and rhyme with it (low, below, slow, flow, blow, cold…), along with short phrases that end in a rhyme. The 20 mood themes are still in the same picker.
+The default theme mode is **"Related to my word"**. A search for *snow* now returns about 200 rhyming words related to it, plus about 50 phrases. Common words such as night, heart and rain return 300 words and up to 80 phrases. The results are grouped:
 
-- Data: GloVe 6B 100d (wiki+gigaword) vectors, limited to the top 45k frequent words. That leaves 39,691 usable words. Each word keeps 36 rhyme-neighbours, ranked by cosine similarity × rhyme quality (perfect 1, near .85, slant .7, assonant .5), and 20 general neighbours used for phrases.
-- Built by `build_assoc.py` (needs gensim plus the GloVe model) into `data/assoc/`: `vocab.json` and 16 binary shards of uint16 ids plus uint8 sims. About 6.1 MB total. The static site loads only the shard it needs, on demand.
-- API: `GET /api/related?word=snow`, `GET /api/rhymes?word=snow&theme=related`.
+- **Perfect & near**: below, low, slow, glow, flow, blow…
+- **Multi-syllable**: tomorrow, overflow, plateau…, and *frozen → chosen* with ×2 syllables matched.
+- **Slant & vowel**: cold, home, alone…
+- **Phrases**: "where the cold winds blow", "let the tears flow", "many moons ago", "high and low"…
+
+When you're online, **✨ AI brainstorm** is on by default. Workers AI suggests about 90 themed rhymes and phrases. The local engine checks each one (`POST /api/verify`) and adds only those that really rhyme. The toggle is remembered in localStorage.
+
+How it works:
+
+- **Data:** GloVe 6B 100d is concatenated with ConceptNet Numberbatch 19.08 (weighted 0.4/0.6) and reduced by PCA to 64 dims int8, covering 51.5k words. Each query uses the word vector plus half the mean of its top neighbours. Words common in lyrics get a boost.
+- **Ranking:** score = association × rhyme quality. Rhyme quality uses the tier (perfect 1, near .85, slant .7, assonant .5 adjusted by the trailing vowel run and coda similarity) × a multi-syllable bonus. Proper nouns, function words and stem repeats are dropped.
+- **Phrase bank:** `data/phrases.txt` has about 30k entries from three sources:
+  - Wiktionary English idioms and phrases (CC BY-SA)
+  - ConceptNet terms (CC BY-SA; used only as vectors, not shown)
+  - a lyric-phrase list generated once with Workers AI
+- **Build:** `build_phrases.py` and then `build_assoc.py` write `data/assoc/`, about 13 MB in total. Lazy loading keeps the static site light:
+  - `vocab.json`
+  - 32 query shards (`q-XX.bin`)
+  - per-stressed-vowel candidate files (`g-V.bin`)
+  - per-stressed-vowel phrase files (`p-V.*`)
+
+  A search loads about 1 MB.
+- **API:**
+  - `GET /api/related?word=snow&limit=300&phrases=80`
+  - `POST /api/verify {"word","items"}`
+  - `GET /api/rhymes?word=snow&theme=related`
+- **Pad:** the lyrics pad shows **rhyme density**, a Malmi et al.-style measure: the average longest vowel-sequence match of each word against the 15 words before it. Typical pop scores about 0.7–0.9; dense rap scores 1.1 and up.
 
 ## AI line writer (Cloudflare Worker)
 
-`worker/` holds a Cloudflare Worker (`rhymer-ai`) that uses Workers AI (`@cf/meta/llama-3.1-8b-instruct-fp8`). You give it a lyric line and it returns 5–8 next lines that loosely rhyme. The app re-ranks them with the local rhyme engine (`POST /api/rank_lines`) so the true rhymes come first. The worker restricts CORS to the Pages origin, rate-limits each IP (12/min, 300/day per isolate), caps input lengths, and keeps no secrets on the client.
+`worker/` holds the `rhymer-ai` Worker, which runs Workers AI **`@cf/meta/llama-3.3-70b-instruct-fp8-fast`**.
+
+For each request the app sends:
+- the line
+- its syllable count and stress pattern (DUM/da)
+- the 10 strongest related true rhymes
+- "echo" words for multi-syllable rhymes
+
+How a request is processed:
+1. The model writes 24 candidates. Its prompt asks for a songwriter / rap ghostwriter style: real end rhymes, multi-syllable echoes, internal rhymes, concrete images, no filler endings and no clichés.
+2. In a second, cheap **editor pass**, the model rates each candidate 0–10 for sense and naturalness.
+3. The local engine (`POST /api/rank_lines`, also ported to JS for the static site) scores every candidate 0–100. The factors are:
+   - end-rhyme tier on the stressed vowel
+   - multi-syllable match
+   - internal rhymes
+   - syllable fit (±1)
+   - fit with the topic
+   - the editor's sense score
+   - penalties for filler, dangling function words, a determiner in front of a non-noun, parroting the input's lead-in word, clichés, rare forced words, and repeated end words or near-duplicate lines
+4. The app shows the best 8 with score badges. **More lines** sends a new seed and excludes the lines already shown.
+
+Quota and caching:
+- Free Workers AI is 10,000 neurons a day. A fresh lines call costs about 120–150 neurons, and a brainstorm about 80.
+- Requests are `GET ?q=…`, and the Worker has `[cache] enabled = true`. Identical requests are therefore served from Cloudflare's edge cache for 7 days, from the in-isolate memo, or from localStorage on the device, all at zero cost.
+- The worker restricts CORS to the Pages origin, rate-limits each IP to 20 a minute and 400 a day, and caps input sizes.
+- A live opt-in quality check: `python tests/live_quality.py "walking through the falling snow"`.
 
 Deploy:
 

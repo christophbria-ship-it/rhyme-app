@@ -122,3 +122,9 @@ def test_rank_sense_and_grammar(engine):
     assert {x["sense"] for x in hi} == {10}
     for bad in ([1, 2], [11, 0, 0], ["a", 1, 1], [True, 1, 1]):
         with pytest.raises(ValueError): engine.rank_lines(line, c, sense=bad)
+
+def test_rank_sense_nonsense_penalty(engine):
+    lines = ["my fingers tapping out a nervous gum", "till the feeling in my chest goes numb"]
+    r = {x["text"]: x for x in engine.rank_lines("my heart is beating like a drum", lines, sense=[2, 8])["lines"]}
+    r6 = {x["text"]: x for x in engine.rank_lines("my heart is beating like a drum", lines, sense=[6, 8])["lines"]}
+    assert r[lines[0]]["sense"] == 2 and r6[lines[0]]["score"] - r[lines[0]]["score"] >= 35 and r[lines[1]]["score"] > r[lines[0]]["score"]

@@ -25,8 +25,8 @@ def body_for(e, line, mood="any"):
 
 def run(e, line):
     b = body_for(e, line); q = json.dumps(b, separators=(",", ":"))
-    req = urllib.request.Request(URL + "/lines?v=6e&q=" + urllib.parse.quote(q), headers={"Origin": ORIGIN, "User-Agent": "rhymer-live-test"})
-    with urllib.request.urlopen(req, timeout=90) as r: d = json.load(r); cache = r.headers.get("cf-cache-status")
+    req = urllib.request.Request(URL + "/lines?v=6f&q=" + urllib.parse.quote(q), headers={"Origin": ORIGIN, "User-Agent": "rhymer-live-test"})
+    with urllib.request.urlopen(req, timeout=170) as r: d = json.load(r); cache = r.headers.get("cf-cache-status")
     sense = d.get("sense") if isinstance(d.get("sense"), list) and len(d["sense"]) == len(d["lines"]) else None
     ranked = e.rank_lines(line, d["lines"][:40], sense=sense[:40] if sense else None)["lines"]
     best = [x for x in ranked if x["tier"] != "none" and x["score"] >= 35][:8]

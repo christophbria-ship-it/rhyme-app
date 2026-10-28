@@ -1,6 +1,8 @@
 """Rhyme engine: loads precomputed indices, answers queries."""
 import os, pickle, re, bisect, json, struct, math, operator
 from build_index import keys, strip, VOWELS, rhyme_tail, segments, cons_sim, FAM, MANNER
+import functools, copy
+strip = functools.lru_cache(maxsize=4096)(strip)  # hot path: phone stress-stripping (a few hundred distinct phones)
 SLANT_MIN = 0.6
 D = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 WORD_RE = re.compile(r"^[a-z][a-z'.\-]{0,44}$")
@@ -325,7 +327,7 @@ LYRIC_BOOST = 1.35
 REL_STOP = FUNC | set("""these those there here where when what which who whom whose why how mine yours hers ours theirs one ones been
 being doing having shall may might must also very much more most some any all such only even still both each either neither every
 about after against among during into onto over through under nor too something nothing anything everything someone anyone everyone okay oh yeah wow ok per via mph pm km wo ca
-though although because while since until unless whether thereof whereof hereof""".split())
+though although because while since until unless whether thereof whereof hereof ceo cfo cto joe mike bordeaux""".split())
 GROUP_ORDER = ("perfect", "multi", "slant")
 
 def _svowels_ph(prons):
@@ -420,7 +422,16 @@ def _related_set(self, w):
     if q: s.update(c for c in q[2] if not _stem_clash(w, c))
     return s
 
-Engine.related = _related
+_REL_CACHE = {}
+def _related_cached(self, word, *a, **kw):
+    key = (word, a, tuple(sorted(kw.items())))
+    hit = _REL_CACHE.get(key)
+    if hit is None:
+        hit = _related(self, word, *a, **kw)
+        if len(_REL_CACHE) >= 256: _REL_CACHE.pop(next(iter(_REL_CACHE)))
+        _REL_CACHE[key] = hit
+    return copy.deepcopy(hit)
+Engine.related = _related_cached
 Engine.related_set = _related_set
 
 # ---------------- verify AI brainstorm items against the rhyme engine ----------------
@@ -553,7 +564,8 @@ def _rank_lines(self, line, lines, keep=8, sense=None):
         sc += max(0, 6 - i // 4)  # the model lists its best ideas first
         sn = None
         if sense is not None and t not in ("none", "repeat"):
-            sn = round(sense[i]); sc += max(-30, min(20, (sn - 6) * 5))  # editor pass: does the line make sense / land naturally?
+            sn = round(sense[i]); sc += max(-30, min(20, (sn - 6) * 5))
+            if sn <= 3: sc -= 15  # editor pass rated it nonsense / forced
         out.append({"text": text.strip(), "end": e, "tier": t, "syllables": a["syllables"], "syllable_diff": sd, "multi": multi,
                     "internal": internal, "filler": filler, "cliche": cliche, "assoc": round(coh, 3) if coh is not None else None, "sense": sn,
                     "score": max(0, min(100, round(sc))), "_i": i})

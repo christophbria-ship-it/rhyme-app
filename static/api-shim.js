@@ -239,7 +239,7 @@ function rankLines(line,lines,keep=8,sense=null){if(typeof line!=="string"||!lin
     const ef=W.info.has(e)?W.info.get(e).freq:0;if(t!=="none"&&t!=="repeat")sc-=ef<3?12:ef<3.5?6:0;
     let coh=null;if(qa&&["perfect","near","slant","assonant"].includes(t)){for(const v of evs){const hit=alookup(v,e);if(hit){coh=cos(qa[0],qa[1],hit[0],hit[1]);break}}
       if(coh!==null)sc+=coh>=0.3?6:coh>=0.18?3:coh<0.06?-6:0}
-    sc+=Math.max(0,6-Math.floor(i/4));let sn=null;if(sense!=null&&t!=="none"&&t!=="repeat"){sn=pyRound(sense[i]);sc+=Math.max(-30,Math.min(20,(sn-6)*5))}
+    sc+=Math.max(0,6-Math.floor(i/4));let sn=null;if(sense!=null&&t!=="none"&&t!=="repeat"){sn=pyRound(sense[i]);sc+=Math.max(-30,Math.min(20,(sn-6)*5));if(sn<=3)sc-=15}
     return{text:text.trim(),end:e,tier:t,syllables:a.syllables,syllable_diff:sd,multi,internal:inl,filler,cliche,assoc:coh===null?null:r3(coh),sense:sn,score:Math.max(0,Math.min(100,pyRound(sc))),_i:i}});
   out.sort((a,b)=>b.score-a.score||a._i-b._i);const ends=new Map(),bags=[];
   for(const x of out){if(x.end===null)continue;const bag=new Set((x.text.match(TOKEN)||[]).map(t=>t.toLowerCase()).filter(t=>!LX().stop.has(t)));let pen=0;

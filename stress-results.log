@@ -1,11 +1,13 @@
-index load: 798ms, RSS after load: 447.1 MB (baseline 21.4 MB)
-engine 10k lookups (cold cache): n=10000 mean=2.11ms p50=1.39 p90=4.26 p95=5.63 p99=18.36 max=462.71
-  throughput=473 q/s
-engine 10k lookups (warm cache): n=10000 mean=2.09ms p50=1.43 p90=4.40 p95=5.79 p99=18.99 max=112.94
-  throughput=477 q/s
-  engine RSS max=665.4 MB
-HTTP 2k lookups, 16 concurrent, cold: n=2000 mean=14.70ms p50=12.66 p90=23.85 p95=29.68 p99=46.75 max=71.58
-  throughput=1076 req/s
-HTTP 2k lookups, 16 concurrent, warm: n=2000 mean=10.54ms p50=9.78 p90=15.58 p95=17.97 p99=26.63 max=42.61
-  server memory: master RSS=416 MB; workers=4, RSS each≈468 MB, total PSS=1614 MB
-STRESS PASS (criteria: engine p95<50ms, HTTP cold p99<200ms)
+index load: 1091ms, RSS after load: 447.2 MB (baseline 21.2 MB)
+engine 10k lookups (cold cache): n=10000 mean=2.28ms p50=1.54 p90=4.71 p95=6.20 p99=11.48 max=822.09
+  throughput=438 q/s
+engine 10k lookups (warm cache): n=10000 mean=2.03ms p50=1.48 p90=4.52 p95=5.83 p99=10.53 max=170.58
+  throughput=492 q/s
+  engine RSS max=665.7 MB
+HTTP 2k lookups, 16 concurrent, cold: n=2000 mean=15.26ms p50=12.66 p90=25.06 p95=32.70 p99=53.58 max=116.47
+  throughput=1037 req/s
+HTTP 2k lookups, 16 concurrent, warm: n=2000 mean=10.79ms p50=10.22 p90=15.77 p95=17.81 p99=23.70 max=28.89
+HTTP 309 related (300 words + phrases), 16 concurrent: n=309 mean=201.52ms p50=174.94 p90=337.76 p95=417.48 p99=687.72 max=777.85
+  throughput=77 req/s
+  server memory: master RSS=417 MB; workers=4, RSS each≈638 MB, total PSS=2280 MB
+STRESS PASS (criteria: engine p95<50ms, HTTP cold p99<200ms, related p95<1000ms at 16 concurrent)

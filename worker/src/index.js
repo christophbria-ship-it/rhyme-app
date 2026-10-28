@@ -70,7 +70,9 @@ const CLICHES = "heart of gold, deep inside, end of time, set me free, shining s
 export function buildMessages(b) {
   const n = b.count || 6, end = b.end_word || lastWord(b.line), tail2 = tailWords(b.line, 2);
   const mood = b.mood && b.mood !== "any" && b.mood !== "related" ? `\nMood / theme: ${b.mood}.` : "";
-  const syl = (b.syllables ? `HARD LIMIT ${Math.max(1, b.syllables - 1)}-${b.syllables + 1} syllables per line (the previous line has ${b.syllables}) — count them; longer lines are thrown away` : "the same number of syllables as the previous line (±1)") +
+  const nw = (b.line.match(/[A-Za-z']+/g) || []).length || 1;
+  const syl = (b.syllables ? `HARD LIMIT ${Math.max(1, b.syllables - 1)}-${b.syllables + 1} syllables per line (the previous line has ${b.syllables} syllables in ${nw} words) — ` +
+    `so use ${Math.max(2, nw - 1)}-${nw + 2} words and short, punchy phrasing; count the syllables, longer lines are thrown away` : "the same number of syllables as the previous line (±1)") +
     (b.rhythm ? `; the previous line's stress pattern is ${b.rhythm}, so mirror its beat` : "");
   const hints = b.rhymes && b.rhymes.length ? `\nTrue rhymes for "${end}" that fit the theme (use only if they make sense, or find better ones): ${b.rhymes.join(", ")}.` : "";
   const echo = b.echo && b.echo.words && b.echo.words.length ? `\nWords with the same vowel sounds as "${b.echo.word}" — use them to build a multi-syllable rhyme on "${b.echo.word} ${end}" (e.g. "${b.echo.words[0]} <rhyme for ${end}>") or internal rhymes: ${b.echo.words.join(", ")}.` : "";

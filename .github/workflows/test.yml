@@ -9,6 +9,6 @@ jobs:
         with: { python-version: "3.12" }
       - uses: actions/setup-node@v4
         with: { node-version: "20" }
-      - run: cd worker && node --test test/
+      - run: cd worker && node --test test/*.test.js
       - run: pip install pytest playwright && python -m playwright install --with-deps chromium
       - run: python build_index.py && python -m pytest -v tests && python tests/stress.py
