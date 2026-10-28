@@ -445,12 +445,19 @@ def _verify(self, word, items):
         for c, m, _ in cd[t]: tier_of[c] = t
     qtail_v = sum(1 for p in rhyme_tail(qph) if strip(p) in VOWELS) if qph else 1
     guess = lambda t: (self.pronunciations(t)[0] or [None])[0]
-    out, seen = [], set()
+    out, seen, pre, ends = [], set(), {}, {}
     for raw in items:
         text = re.sub(r"\s+", " ", re.sub(r"[^a-z' \-]", " ", raw.lower())).strip()
         toks = text.replace("-", " ").split()
         if not toks or text in seen or toks[-1] == w: continue
         seen.add(text)
+        # only real, common words: AI brainstorms invent spellings ("nyte", "vart") and dredge up names ("moe")
+        last = self.info.get(toks[-1])
+        if not last or not last["pos"] or last["freq"] < 2.8 or len(toks[-1]) < 2 or (len(toks) == 1 and toks[-1] in REL_STOP) or toks[-1] in FILLER: continue
+        if any(x not in self.info or self.info[x]["freq"] < 2.5 for x in toks): continue
+        if len(toks) > 1:
+            k2 = " ".join(toks[:2]); pre[k2] = pre.get(k2, 0) + 1; ends[toks[-1]] = ends.get(toks[-1], 0) + 1
+            if pre[k2] > 2 or ends[toks[-1]] > 2: continue  # "gonna be the light / might / sight / right ..."
         if len(toks) == 1 and toks[0] in tier_of: t = tier_of[toks[0]]
         else:
             ph = phrase_phones(toks, self.info, guess)

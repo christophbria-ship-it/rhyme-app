@@ -158,7 +158,8 @@ def test_related_and_rank_parity(browser, site_url, engine):
         assert all(abs(a["score"] - b["score"]) < 1e-3 for a, b in zip(js["related"], py["related"]))
         assert [(p["text"], p["tier"], p["source"]) for p in js["phrases"]] == [(p["text"], p["tier"], p["source"]) for p in py["phrases"]], w
         assert js["groups"] == py["groups"] and js["phrase_total"] == py["phrase_total"]
-    items = ["glow", "below zero", "let it go", "frozen", "cold", "banana", "white glow", "overflow", "snow", "go-getter"]
+    items = ["glow", "below zero", "let it go", "frozen", "cold", "banana", "white glow", "overflow", "snow", "go-getter", "moe", "sorrowslow", "o", "bestow", "sloe",
+             "gonna be the glow", "gonna be the flow", "gonna be the throw", "let it flow", "let it show", "let it grow"]
     js = pg.evaluate("async a => (await (await fetch('api/verify', {method:'POST', body: JSON.stringify(a)})).json())", {"word": "snow", "items": items})
     assert js == engine.verify("snow", items)
     js = pg.evaluate("async () => (await (await fetch('api/rhymes?word=snow&theme=related&limit=5000')).json())")

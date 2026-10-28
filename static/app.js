@@ -122,8 +122,9 @@ function phraseBtn(p,ai){return `<button type="button" class="phrase t-${p.tier}
 const REL_CAP={perfect:30,multi:24,slant:30,phrase:16},relOpen=new Set();
 function renderRel(slot,d,bs){const g={perfect:[],multi:[],slant:[],phrase:[]},seen=new Set();
   d.related.forEach(x=>{g[x.group].push(chip(x,false));seen.add(x.word)});d.phrases.forEach(p=>{g.phrase.push(phraseBtn(p,false));seen.add(p.text)});
-  let added=0;if(bs&&bs.items)bs.items.forEach(x=>{if(seen.has(x.text))return;seen.add(x.text);added++;
-    if(x.group==='phrase')g.phrase.unshift(phraseBtn({text:x.text,tier:x.tier},true));else g[x.group].unshift(chip({word:x.text,tier:x.tier,matched:x.matched},true))});
+  let added=0;const ai={};if(bs&&bs.items)bs.items.forEach(x=>{if(seen.has(x.text))return;seen.add(x.text);added++;
+    const k=x.group==='phrase'?'phrase':x.group;(ai[k]=ai[k]||[]).push(k==='phrase'?phraseBtn({text:x.text,tier:x.tier},true):chip({word:x.text,tier:x.tier,matched:x.matched},true))});
+  for(const k in ai)g[k].splice(Math.min(10,g[k].length),0,...ai[k]);
   const total=Object.values(g).reduce((a,x)=>a+x.length,0);
   const bsState=!bsOn()?'off':bs===undefined?'loading':bs&&bs.error?'error':bs?'done':'off';
   slot.innerHTML=`<section class="card relcard" id="relCard" data-bs="${bsState}"><div class="relhead"><h2 class="ptitle">Related to “${esc(d.word)}” <span class="badge b-perfect" id="relTotal">${total}</span></h2>

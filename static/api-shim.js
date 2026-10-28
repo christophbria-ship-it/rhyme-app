@@ -200,9 +200,13 @@ function related(q){const raw=(q.get("word")||"").trim();if(!raw)return[400,{err
 function verify(word,items){const w=String(word||"").trim().toLowerCase();if(!WORD_RE.test(w))throw new RangeError("invalid word");
   if(!Array.isArray(items)||items.length>200||!items.every(x=>typeof x==="string"&&x.length>0&&x.length<=60))throw new RangeError("invalid items");
   const cd=candidates(w),qph=cd.prons.length?cd.prons[0]:[],tierOf=new Map();for(const t of["slant","near","perfect"])for(const[c]of cd[t])tierOf.set(c,t);
-  const qtail=qph.length?tailVowels(qph):1,out=[],seen=new Set();
+  const qtail=qph.length?tailVowels(qph):1,out=[],seen=new Set(),pre=new Map(),ends=new Map();
   for(const raw of items){const text=raw.toLowerCase().replace(/[^a-z' \-]/g," ").replace(/\s+/g," ").trim();const toks=text.replace(/-/g," ").split(" ").filter(Boolean);
     if(!toks.length||seen.has(text)||toks[toks.length-1]===w)continue;seen.add(text);let t;
+    const lw=toks[toks.length-1],last=W.info.get(lw);
+    if(!last||!last.pos.length||last.freq<2.8||lw.length<2||(toks.length===1&&LX().relStop.has(lw))||LX().filler.has(lw))continue;
+    if(toks.some(x=>!W.info.has(x)||W.info.get(x).freq<2.5))continue;
+    if(toks.length>1){const k2=toks.slice(0,2).join(" ");pre.set(k2,(pre.get(k2)||0)+1);ends.set(lw,(ends.get(lw)||0)+1);if(pre.get(k2)>2||ends.get(lw)>2)continue}
     if(toks.length===1&&tierOf.has(toks[0]))t=tierOf.get(toks[0]);else{const ph=phrasePhones(toks,guessPron);t=ph&&qph.length?tailTier(qph,ph):null}
     if(t===null)continue;const ph=phrasePhones(toks,guessPron)||[],vm=qph.length?vowelMatch(qph,ph):0;
     if(t==="assonant"&&vm<2&&toks.length>1)continue;const syl=ph.filter(isV).length;

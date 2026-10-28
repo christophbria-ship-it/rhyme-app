@@ -128,3 +128,10 @@ def test_rank_sense_nonsense_penalty(engine):
     r = {x["text"]: x for x in engine.rank_lines("my heart is beating like a drum", lines, sense=[2, 8])["lines"]}
     r6 = {x["text"]: x for x in engine.rank_lines("my heart is beating like a drum", lines, sense=[6, 8])["lines"]}
     assert r[lines[0]]["sense"] == 2 and r6[lines[0]]["score"] - r[lines[0]]["score"] >= 35 and r[lines[1]]["score"] > r[lines[0]]["score"]
+
+def test_verify_rejects_junk(engine):
+    keep = {x["text"] for x in engine.verify("night", ["nyte", "nite", "plight", "upright", "might", "gonna be the delight", "gonna be the right",
+        "gonna be the sight", "with all my might", "in plain sight"])["items"]}
+    assert keep == {"plight", "upright", "gonna be the delight", "gonna be the right", "with all my might", "in plain sight"}, keep
+    keep = {x["text"] for x in engine.verify("heart", ["vart", "shart", "kart", "airt", "cart", "impart", "falling apart"])["items"]}
+    assert keep == {"cart", "impart", "falling apart"}, keep
