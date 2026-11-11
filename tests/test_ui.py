@@ -63,10 +63,39 @@ def test_error_states(page, base_url):
     page.unroute("**/api/rhymes*"); page.route("**/api/rhymes*", lambda r: r.abort())
     page.fill("#q", "dog"); page.click("#go"); expect(page.locator(".err")).to_be_visible(); shot(page, "error-network")
 
+def test_black_contrast_at_360(page, base_url):
+    if page.size_name != "mobile": return
+    page.set_viewport_size({"width": 360, "height": 740})
+    page.goto(base_url + "/?w=snow")
+    expect(page.locator("#status")).to_have_attribute("data-state", "done", timeout=30000)
+    ratios = page.evaluate("""() => {
+      const L = css => { const [r,g,b] = css.match(/\\d+/g).map(Number).slice(0,3).map(v => { v/=255; return v<=0.04045 ? v/12.92 : Math.pow((v+0.055)/1.055, 2.4); }); return 0.2126*r+0.7152*g+0.0722*b; };
+      const ratio = (fg, bg) => { const a=L(fg), b=L(bg); return (Math.max(a,b)+0.05)/(Math.min(a,b)+0.05); };
+      const cs = el => getComputedStyle(el);
+      const body = cs(document.body), h1 = cs(document.querySelector('h1')), sub = cs(document.querySelector('.sub')), go = cs(document.querySelector('#go'));
+      return {
+        text: ratio(body.color, body.backgroundColor),
+        title: ratio(h1.color, body.backgroundColor),
+        muted: ratio(sub.color, body.backgroundColor),
+        button: ratio(go.color, go.backgroundColor),
+        width: document.documentElement.scrollWidth
+      };
+    }""")
+    assert ratios["text"] >= 4.5 and ratios["title"] >= 4.5 and ratios["muted"] >= 4.5 and ratios["button"] >= 4.5, ratios
+    assert ratios["width"] <= 360
+    page.goto(base_url + "/#pad")
+    verse = "saved on this device\nstill here"
+    page.fill("#pad", verse)
+    assert page.evaluate("localStorage.getItem('rhymer-pad')") == verse
+    page.reload()
+    expect(page.locator("#pad")).to_have_value(verse)
+    assert page.evaluate("document.documentElement.scrollWidth") <= 360
+
 def test_theme(page, base_url):
     page.goto(base_url + "/?w=cat"); expect(page.locator("#status")).to_have_attribute("data-state", "done")
-    assert page.evaluate("getComputedStyle(document.body).backgroundColor") == "rgb(251, 247, 239)"
-    assert page.evaluate("getComputedStyle(document.querySelector('h1')).color") == "rgb(122, 62, 29)"
+    assert page.evaluate("getComputedStyle(document.body).backgroundColor") == "rgb(0, 0, 0)"
+    assert page.evaluate("getComputedStyle(document.querySelector('h1')).color") == "rgb(232, 181, 106)"
+    assert page.evaluate("getComputedStyle(document.body).color") == "rgb(251, 247, 239)"
     assert "Fraunces" in page.evaluate("getComputedStyle(document.querySelector('h1')).fontFamily")
     assert page.locator(".logo").is_visible()
     r = page.evaluate("getComputedStyle(document.querySelector('.w')).borderRadius"); assert float(r.rstrip("px")) >= 20
