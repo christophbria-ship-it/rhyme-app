@@ -37,7 +37,7 @@ test("brainstorm returns grouped, cleaned rhymes", async () => {
   const e = env('Sure! {"perfect":["glow","Flow","snow","<b>"],"multi":["let it go","below"],"slant":["cold"],"phrases":["white glow", 5, "' + "x".repeat(70) + '"]}');
   const r = await worker.fetch(get("/brainstorm", { word: "snow", mood: "night" }), e);
   assert.equal(r.status, 200); const d = await r.json();
-  assert.deepEqual(d.perfect, ["glow", "flow", "b"]); assert.deepEqual(d.multi, ["let it go", "below"]); assert.deepEqual(d.slant, ["cold"]); assert.deepEqual(d.phrases, ["white glow"]);
+  assert.deepEqual(d.perfect, ["glow", "flow"]); assert.deepEqual(d.multi, ["let it go", "below"]); assert.deepEqual(d.slant, ["cold"]); assert.deepEqual(d.phrases, ["white glow"]);
   assert.match(e.last.input.messages[1].content, /Word: "snow"/); assert.match(e.last.input.messages[1].content, /night/);
   assert.equal((await worker.fetch(get("/brainstorm", { word: "Not A Word!" }), e)).status, 400);
   assert.equal((await worker.fetch(get("/brainstorm", { word: "snow" }), env("no json here"))).status, 502);
@@ -70,6 +70,20 @@ test("rate limiting per IP", async () => {
   assert.deepEqual(codes.slice(0, 20), Array(20).fill(200)); assert.equal(codes[20], 429);
   assert.equal((await worker.fetch(req({ line: "falling snow" }, { ip: "8.8.8.8" }), env(LINES))).status, 200);
 });
+test("a stalled editor pass still returns the written lines", async () => {
+  _resetRate();
+  const e = { calls: 0, JUDGE_MS: 40, AI: { run: async (_model, input) => {
+    e.calls++;
+    if (/strict, experienced lyric editor/.test(input.messages[0].content)) return new Promise(() => {});
+    return { response: LINES };
+  } } };
+  const r = await worker.fetch(req({ line: "walking through the falling snow" }), e);
+  assert.equal(r.status, 200);
+  const d = await r.json();
+  assert.ok(d.lines.length >= 2);
+  assert.equal(d.sense, undefined);
+  assert.equal(e.calls, 2);
+});
 test("AI failures map to 502 / 429 quota", async () => {
   _resetRate();
   assert.equal((await worker.fetch(req({ line: "a b" }), env(new Error("boom")))).status, 502);
@@ -88,4 +102,6 @@ test("parsers and model output shapes", () => {
   assert.equal(modelText({ output: [{ content: [{ type: "output_text", text: "hi" }] }] }), "hi");
   assert.deepEqual(parseJudge("scores: [7, 11, -2]", 3), [7, 10, 0]); assert.equal(parseJudge("[1,2]", 3), null); assert.equal(parseJudge("nope", 1), null);
   assert.deepEqual(parseBrainstorm('{"perfect":["a b c d e f g"]}', "x").perfect, []);
+  assert.deepEqual(parseBrainstorm('{"perfect":["glow",],"multi":["let it go",], "phrases":["<b>","in the glow"]}', "snow"),
+    { perfect: ["glow"], multi: ["let it go"], slant: [], phrases: ["in the glow"] });
 });
