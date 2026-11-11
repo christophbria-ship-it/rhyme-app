@@ -44,7 +44,8 @@ summary{cursor:pointer;color:var(--copper);font-weight:600;list-style-position:i
 .w sup{color:var(--copper2);font-size:.65rem;margin-left:3px;font-weight:700}
 .meta{font-size:.88rem;color:var(--muted)}
 footer{text-align:center;color:var(--muted);font-size:.78rem;padding:20px;border-top:1px solid var(--line);margin-top:20px}
-@media (max-width:600px){.hero{padding:28px 12px 12px}h1{font-size:2rem}.logo{width:34px;height:34px}main{padding:4px 12px 32px}#go{padding:10px 14px}.fgrid{grid-template-columns:1fr 1fr}.tier{padding:14px}}
+.fgrid select,.fgrid input,#theme,.planlab input{max-width:100%;min-width:0}
+@media (max-width:600px){.hero{padding:28px 12px 12px}h1{font-size:2rem}.logo{width:34px;height:34px}main{padding:4px 12px 32px}#go{padding:10px 14px}.fgrid{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.fgrid select,.fgrid input{width:100%}.tier{padding:14px}.tabs{max-width:calc(100% - 16px)}}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 /* ---- tabs ---- */
 .tabs{display:flex;justify-content:center;gap:6px;margin:0 auto 8px;padding:5px;background:var(--card);border:1px solid var(--line);border-radius:999px;width:max-content;max-width:calc(100% - 24px);box-shadow:var(--shadow)}
@@ -99,7 +100,7 @@ button.w{font:inherit;font-size:.95rem}
 .endw:hover{background:none;color:var(--copper);box-shadow:none}
 #padStats{margin-top:10px}#scheme b{font-family:Fraunces,Georgia,serif;color:var(--copper);letter-spacing:.12em;font-size:1.05rem}
 body[data-tab=pad] .themebar{display:none}
-@media (max-width:600px){.tabs a{padding:7px 12px;font-size:.88rem}
+@media (max-width:600px){#padLines .star{display:none}.tabs a{padding:7px 12px;font-size:.88rem}
 .padgrid{grid-template-columns:1fr}#pad{min-height:240px;font-size:1rem;white-space:pre-wrap}
 #padLines{border-left:0;border-top:1px solid var(--line);display:grid;grid-template-columns:1fr 1fr;column-gap:10px}
 #padLines li{height:1.7rem}#padLines li::before{content:attr(data-n);color:var(--muted);font-size:.72rem;min-width:14px}
@@ -146,3 +147,21 @@ button.aibtn:hover{background:#5F2F15}
 @media (max-width:600px){.ail .sc{order:0}.ail .tb.tx{order:1}}
 .relgroup:not(.open) .xtra{display:none}
 .relmore{margin-top:8px;padding:5px 12px;font-size:.84rem}
+.tierlegend{margin:8px 0 0;color:var(--muted);font-size:.85rem}
+.chip{display:inline-flex;align-items:center;gap:1px;max-width:100%}
+.star{background:transparent;border:0;color:#8A6A4F;padding:0 4px;min-width:1.6em;font-size:1rem;line-height:1}
+.star.on{color:var(--copper)}.star:hover{background:transparent;box-shadow:none;color:var(--copper)}
+.bank{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+.bankitem{display:inline-flex;align-items:center;gap:4px;max-width:100%;background:var(--chip);border:1px solid var(--line);border-radius:999px;padding:2px 4px 2px 10px}
+.banktxt{color:var(--ink);max-width:14rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bankitem .ghost,.bankitem .star{padding:4px 8px;font-size:.78rem}
+.tagrow{margin:0 0 10px}.tagrow button{padding:4px 10px;font-size:.8rem}
+.planlab{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:.85rem;margin:0 0 10px;max-width:100%}
+.planlab input{width:8rem;max-width:100%;text-transform:uppercase}
+.pnote{display:block;color:var(--copper);margin-top:4px}
+.let.plan-hit{box-shadow:0 0 0 2px #2F6B5E}
+.let.plan-miss{box-shadow:0 0 0 2px #C45C4A}
+.let.plan-need{box-shadow:0 0 0 2px var(--copper2)}
+#padLines li.sec{color:var(--copper);font-family:Fraunces,Georgia,serif;font-weight:600}
+#bankBox,#padBankBox{margin:12px 0;background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:10px 14px}
+#bankBox summary,#padBankBox summary{cursor:pointer;color:var(--copper);font-weight:600}

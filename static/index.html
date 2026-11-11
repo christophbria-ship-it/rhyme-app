@@ -22,14 +22,18 @@
   <button type="submit" id="go">Find rhymes</button>
 </form>
 <details id="filters" open><summary>Filters &amp; sort</summary><div class="fgrid">
-  <label>Syllables <select id="syl"><option value="">Any</option><option>1</option><option>2</option><option>3</option><option>4</option><option value="5,6,7,8,9,10">5+</option></select></label>
+  <label>Word syllables <select id="syl"><option value="">Any</option><option>1</option><option>2</option><option>3</option><option>4</option><option value="5,6,7,8,9,10">5+</option></select></label>
   <label>Part of speech <select id="pos"><option value="">Any</option><option value="n">Noun</option><option value="v">Verb</option><option value="adj">Adjective</option><option value="adv">Adverb</option></select></label>
   <label>Popularity <select id="freq"><option value="">All words</option><option value="2">Known (zipf≥2)</option><option value="3">Common (≥3)</option><option value="4">Very common (≥4)</option></select></label>
   <label>Letters min <input id="minl" type="number" min="1" max="45"></label>
   <label>Letters max <input id="maxl" type="number" min="1" max="45"></label>
   <label>Sort <select id="sort"><option value="score">Best match</option><option value="freq">Popularity</option><option value="alpha">A–Z</option><option value="length">Length</option></select></label>
-  <label>Show <select id="tiers"><option value="all">All strictness</option><option value="perfect">Perfect only</option><option value="near">Near only</option><option value="slant">Slant only</option></select></label>
-</div></details>
+  <label>Rhyme tier <select id="tiers" aria-label="Rhyme tier"><option value="all">Perfect, near and slant</option><option value="perfect">Perfect</option><option value="near">Near</option><option value="slant">Slant</option></select></label>
+  <label>Multi-syllable <select id="match" aria-label="Matched syllables"><option value="">Any match</option><option value="2">×2 or more</option><option value="3">×3 or more</option></select></label>
+</div>
+<p class="tierlegend">Perfect matches the ending sound. Near keeps that vowel with close consonants. Slant shares the vowel. ×2 is a multi-syllable match.</p>
+</details>
+<details id="bankBox"><summary>Word bank <span id="bankCount">0</span></summary><div id="bankList" class="bank"></div><p class="hint">Saved on this device, separate from the lyrics pad. Tap ★ on a rhyme, phrase, or line.</p></details>
 <section id="status" aria-live="polite"></section>
 <section id="results"></section>
 </section>
@@ -48,11 +52,15 @@
 <section id="tab-pad" class="panel" role="tabpanel" aria-labelledby="t-pad" hidden>
   <div class="card padcard">
     <div class="padhead"><h2 class="ptitle">Lyrics pad</h2>
-      <div class="padtools"><span id="padSaved" class="saved" aria-live="polite"></span><button type="button" class="aibtn" id="padAI">✨ AI next line</button><button type="button" class="ghost" id="padCopy">Copy</button><button type="button" class="ghost" id="padDownload">Download</button><button type="button" class="ghost" id="padClear">Clear</button></div></div>
-    <p class="hint">Write freely — syllables per line and the rhyme scheme update as you type. Saved on this device. Click an end word to find its rhymes.</p>
+      <div class="padtools"><span id="padSaved" class="saved" aria-live="polite"></span><button type="button" class="aibtn" id="padAI">✨ AI next line</button><button type="button" class="ghost" id="padCopy">Copy</button><button type="button" class="ghost" id="padSuno">Copy for Suno</button><button type="button" class="ghost" id="padSunoDl">Suno file</button><button type="button" class="ghost" id="padDownload">Download</button><button type="button" class="ghost" id="padClear">Clear</button></div></div>
+    <p class="hint">Write freely — syllables per line and the rhyme scheme update as you type. Saved on this device. Click an end word to find its rhymes. Section tags stay in the text and are not counted as lyric lines.</p>
+    <div class="row tagrow" id="tagRow"></div>
+    <label class="planlab">Target scheme <input id="padPlan" list="schemeList" maxlength="8" placeholder="Free" aria-label="Target rhyme scheme" autocomplete="off"></label>
+    <datalist id="schemeList"><option value="AABB"><option value="ABAB"><option value="ABCB"><option value="AAAA"><option value="ABBA"></datalist>
     <div class="padgrid"><textarea id="pad" spellcheck="true" aria-label="Lyrics" placeholder="Start writing your verse here…&#10;&#10;Leave a blank line between verses."></textarea>
     <ol id="padLines" aria-label="Line analysis"></ol></div>
     <div id="padStats" class="meta"></div>
+    <details id="padBankBox"><summary>Word bank <span id="padBankCount">0</span></summary><div id="padBank" class="bank"></div></details>
   </div>
   <div class="aibox" id="aiPad" hidden></div>
 </section>

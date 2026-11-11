@@ -153,6 +153,56 @@ def test_lyrics_pad(page, base_url):
     page.goto(base_url + "/#pad"); page.once("dialog", lambda d: d.accept()); page.click("#padClear")
     expect(page.locator("#pad")).to_have_value(""); expect(page.locator("#padStats")).to_contain_text("will appear here")
 
+def test_word_bank_suno_scheme_and_multis(page, base_url):
+    page.goto(base_url + "/?w=nation"); expect(page.locator("#status")).to_have_attribute("data-state", "done", timeout=30000)
+    page.select_option("#match", "2")
+    expect(page.locator("#status")).to_contain_text("multi-syllable ×2+")
+    sups = page.locator('#results > .tier .w sup').all_inner_texts()
+    assert sups and all(s.startswith("×") and int(s[1:]) >= 2 for s in sups)
+    assert page.locator('#results > .tier[data-tier="slant"]').count() == 0
+    word = page.locator('#results > .tier .w').first.get_attribute("data-w")
+    page.locator('#results > .tier .star').first.click()
+    expect(page.locator("#bankCount")).to_have_text("1")
+    page.locator("#bankBox").evaluate("el => el.open = true")
+    assert word in page.locator("#bankList").inner_text()
+    page.goto(base_url + "/#pad")
+    page.fill("#pad", "[Verse 1]\nkeep this line")
+    page.locator("#padBankBox").evaluate("el => el.open = true")
+    page.locator("#padBank .bins").click()
+    expect(page.locator("#pad")).to_have_value("[Verse 1]\nkeep this line " + word)
+    assert page.evaluate("localStorage.getItem('rhymer-pad')").startswith("[Verse 1]\nkeep this line")
+    page.once("dialog", lambda d: d.accept()); page.click("#padClear")
+    expect(page.locator("#pad")).to_have_value("")
+    assert page.evaluate("localStorage.getItem('rhymer-bank')") and word in page.evaluate("localStorage.getItem('rhymer-bank')")
+    page.click('[data-tag="Chorus"]')
+    expect(page.locator("#pad")).to_have_value("[Chorus]\n")
+    page.fill("#pad", "[Chorus]\nlet it go\n\n[Verse 1]\nthrough the snow")
+    page.context.grant_permissions(["clipboard-read", "clipboard-write"])
+    page.click("#padSuno")
+    expect(page.locator("#padSaved")).to_have_text("Suno copy")
+    assert page.evaluate("navigator.clipboard.readText()") == page.locator("#pad").input_value()
+    with page.expect_download() as dl:
+        page.click("#padSunoDl")
+    got = dl.value
+    assert got.suggested_filename == "lyrics-suno.txt"
+    assert open(got.path(), encoding="utf-8").read() == page.locator("#pad").input_value()
+    expect(page.locator("#scheme")).to_contain_text("A A")
+    expect(page.locator("#padLines .stag")).to_have_count(2)
+    page.fill("#pad", "the cat\nthe dog\nthe hat\nthe log")
+    page.fill("#padPlan", "AABB")
+    expect(page.locator(".pnote").first).to_contain_text("should rhyme")
+    expect(page.locator(".plan-miss").first).to_be_visible()
+    page.fill("#padPlan", "ABAB")
+    expect(page.locator(".plan-hit").first).to_be_visible()
+    expect(page.locator(".pnote")).to_have_count(0)
+    page.fill("#padPlan", "nope")
+    expect(page.locator(".pnote")).to_contain_text("A through H")
+    if page.size_name == "mobile":
+        page.set_viewport_size({"width": 360, "height": 740})
+        page.locator("#bankBox").evaluate("el => el.open = true")
+        page.locator("#padBankBox").evaluate("el => el.open = true")
+        assert page.evaluate("document.documentElement.scrollWidth") <= 360
+
 def test_lyrics_pad_error(page, base_url):
     page.route("**/api/analyze", lambda r: r.fulfill(status=500, content_type="application/json", body='{"error":"internal error"}'))
     page.goto(base_url + "/#pad"); page.fill("#pad", "hello world")

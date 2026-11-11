@@ -40,6 +40,15 @@ def test_rhymes_theme_api(base_url):
     assert d["theme"] == "night" and d["perfect"] and all(x["themed"] for x in d["perfect"])
     assert get(base_url, "/api/rhymes?word=night&theme=bogus")[0] == 400
 
+def test_min_match_and_plan_api(base_url):
+    d = json.loads(get(base_url, "/api/rhymes?word=nation&min_match=2&limit=20")[1])
+    assert d["perfect"] and all(x["matched_syllables"] >= 2 for x in d["perfect"]) and d["near"] == [] and d["slant"] == []
+    assert get(base_url, "/api/rhymes?word=nation&min_match=9")[0] == 400
+    c, d = post(base_url, "/api/analyze", json.dumps({"text": "[Chorus]\nthe cat\nthe hat", "plan": "AABB"}).encode())
+    assert c == 200 and d["scheme"] == "AA" and d["lines"][0]["section"] == "Chorus" and d["plan"] == "AABB"
+    assert "\n".join(l["text"] for l in d["lines"]) == "[Chorus]\nthe cat\nthe hat"
+    assert post(base_url, "/api/analyze", json.dumps({"text": "the cat", "plan": "nope"}).encode())[0] == 400
+
 def test_analyze_api(base_url):
     import urllib.parse
     d = json.loads(get(base_url, "/api/analyze?text=" + urllib.parse.quote("the cat\nthe hat"))[1]); assert d["scheme"] == "AA"
