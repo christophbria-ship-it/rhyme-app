@@ -132,6 +132,20 @@ def test_rank_sense_nonsense_penalty(engine):
     neutral = engine.rank_lines("my heart is beating like a drum", [lines[1]], sense=[6])["lines"][0]["score"]
     assert praised == neutral  # a self-reported 10 is not extra credit
 
+def test_live_worker_junk_is_rejected(engine):
+    """Lines the live worker returned for snow, and slant non-words from brainstorm."""
+    junk = ["every step I take is through the woe", "the city streets are empty as the tow",
+            "frosty mornings turn to let it grow", "memories of you begin to bestow",
+            "my footsteps quiet on the forest flow", "all about the woe"]
+    good = "The world is hushed and white below"
+    r = {x["text"]: x for x in engine.rank_lines("walking through the falling snow", [good, *junk], sense=[10] * 7)["lines"]}
+    assert r[good]["keep"] and r[good]["score"] >= 60
+    for line in junk:
+        assert r[line]["score"] == 0 and not r[line]["keep"], line
+    keep = {x["text"] for x in engine.verify("snow", ["soo", "forso", "beho", "kno", "all about the woe", "the tow",
+                                                      "forest flow", "let it grow", "let it go", "glow", "below"])["items"]}
+    assert keep == {"let it go", "glow", "below"}, keep
+
 def test_verify_rejects_forced_snow_phrases(engine):
     keep = {x["text"] for x in engine.verify("snow", ["soo", "in the slow", "through the woe", "let it go", "glow", "in the glow", "white glow"])["items"]}
     assert "soo" not in keep and "in the slow" not in keep and "through the woe" not in keep

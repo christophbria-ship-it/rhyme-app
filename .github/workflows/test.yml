@@ -3,6 +3,7 @@ on: [push, pull_request]
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -10,5 +11,21 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: "20" }
       - run: cd worker && node --test test/*.test.js
-      - run: pip install pytest playwright && python -m playwright install --with-deps chromium
-      - run: python build_index.py && python -m pytest -v tests && python tests/stress.py
+      - name: Install pytest
+        timeout-minutes: 5
+        run: pip install pytest 'playwright==1.65.0'
+      - name: Restore Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ms-playwright-1.65.0-${{ runner.os }}-chromium
+      - name: Install Chromium
+        timeout-minutes: 8
+        run: |
+          set -euo pipefail
+          # No --with-deps. That flag runs apt-get, which hangs with no timeout when
+          # azure.archive.ubuntu.com does not resolve. ubuntu-latest already has the libraries.
+          python -m playwright install chromium
+      - name: Test
+        timeout-minutes: 15
+        run: python build_index.py && python -m pytest -v tests && python tests/stress.py

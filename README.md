@@ -74,6 +74,10 @@ How it works:
 
 `worker/` holds the `rhymer-ai` Worker, which runs Workers AI **`@cf/meta/llama-3.3-70b-instruct-fp8-fast`**.
 
+Before a response is returned, the worker drops anything the rhyme app would reject: a token that is not in the CMUdict/WordNet list (`worker/src/dict.js`, about 39k real words plus function words), and forced endings such as "through the woe", "as the tow", "let it grow", "to bestow", and "forest flow". "let it go" stays. The in-browser verifier applies the same ending rules, so a cached worker response cannot put those lines back on screen. Invented slant spellings (`soo`, `forso`, `beho`, `kno`) never had a part of speech, so the app already hid them; the worker now removes them too.
+
+A brainstorm asks for about 40 items and caps the completion at 420 tokens. The previous prompt asked for about 100 items and 1400 tokens, which took about 18 seconds cold. The shorter call is the same kind of list, just not long enough to spend that long. It has not been timed on the live worker, because this change is not deployed.
+
 For each request the app sends:
 - the line
 - its syllable count and stress pattern (DUM/da)
