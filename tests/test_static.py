@@ -70,7 +70,7 @@ def test_manifest_valid(browser, site_url):
     m = pg.evaluate("async h => { const r = await fetch(h); return {ct: r.headers.get('content-type'), j: await r.json()} }", href)
     j = m["j"]
     assert j["name"] == "Rhymer" and j["short_name"] and j["display"] == "standalone"
-    assert j["background_color"].upper() == "#FBF7EF" and j["theme_color"].upper() == "#7A3E1D"
+    assert j["background_color"].upper() == "#000000" and j["theme_color"].upper() == "#000000"
     assert j["start_url"] == "./" and j["scope"] == "./"
     sizes = {(i["sizes"], i["purpose"]) for i in j["icons"]}
     assert {("192x192", "any"), ("512x512", "any"), ("512x512", "maskable")} <= sizes
@@ -81,7 +81,7 @@ def test_manifest_valid(browser, site_url):
     apple = pg.evaluate("""async () => { const l = document.querySelector('link[rel=apple-touch-icon]'); const r = await fetch(l.href);
         const img = await createImageBitmap(await r.blob()); return [r.status, img.width] }""")
     assert apple == [200, 180]
-    for name, val in [("apple-mobile-web-app-capable", "yes"), ("apple-mobile-web-app-title", "Rhymer"), ("theme-color", "#7A3E1D")]:
+    for name, val in [("apple-mobile-web-app-capable", "yes"), ("apple-mobile-web-app-title", "Rhymer"), ("theme-color", "#000000")]:
         assert pg.evaluate(f"document.querySelector('meta[name=\"{name}\"]').content") == val
     pg.close()
 
@@ -137,6 +137,12 @@ def test_songwriting_parity(browser, site_url, engine):
     assert [t["id"] for t in th] == list(engine.theme_labels) and all(t["size"] == len(engine.themes[t["id"]]) for t in th)
     for q, code in [("api/analyze", 400), ("api/line?prev=", 400), ("api/rhymes?word=cat&theme=zz", 400)]:
         assert pg.evaluate("async q => (await fetch(q)).status", q) == code
+    tagged = "[Chorus]\nlet it go\n\n[Verse 1]\nthrough the snow"
+    js = pg.evaluate("async t => (await (await fetch('api/analyze', {method:'POST', body: JSON.stringify({text:t, plan:'ABAB'})})).json())", tagged)
+    assert js == engine.analyze(tagged, plan="ABAB")
+    js = pg.evaluate("async () => (await (await fetch('api/rhymes?word=nation&min_match=2&limit=30')).json())")
+    py = engine.rhymes("nation", min_match=2, limit=30)
+    for t in ("perfect", "near", "slant"): assert [x["word"] for x in js[t]] == [x["word"] for x in py[t]]
     pg.close()
 
 def test_static_songwriting_ui_offline(browser, site_url):

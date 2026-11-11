@@ -12,12 +12,12 @@ q.addEventListener('keydown',e=>{const items=[...sug.querySelectorAll('li')];if(
   else if(e.key==='Escape')sug.hidden=true});
 q.addEventListener('blur',()=>setTimeout(()=>sug.hidden=true,150));
 $('#f').addEventListener('submit',e=>{e.preventDefault();sug.hidden=true;search()});
-['#syl','#pos','#freq','#minl','#maxl','#sort','#tiers'].forEach(s=>$(s).addEventListener('change',()=>q.value.trim()&&search()));
+['#syl','#pos','#freq','#minl','#maxl','#sort','#tiers','#match'].forEach(s=>$(s).addEventListener('change',()=>q.value.trim()&&search()));
 results.addEventListener('click',e=>{const w=e.target.closest('.w');if(w){q.value=w.dataset.w;search();scrollTo(0,0)}});
 async function search(){clearTimeout(sugTimer);sug.hidden=true;
   const w=q.value.trim();if(!w){showErr('Please enter a word.');return}
   const p=themeParams(new URLSearchParams({word:w,sort:$('#sort').value,limit:'1000'}));
-  [['syllables','#syl'],['pos','#pos'],['min_freq','#freq'],['min_len','#minl'],['max_len','#maxl']].forEach(([k,s])=>{if($(s).value)p.set(k,$(s).value)});
+  [['syllables','#syl'],['pos','#pos'],['min_freq','#freq'],['min_len','#minl'],['max_len','#maxl'],['min_match','#match']].forEach(([k,s])=>{if($(s).value)p.set(k,$(s).value)});
   history.replaceState(null,'','?'+new URLSearchParams({w})+location.hash);
   ctrl&&ctrl.abort();ctrl=new AbortController();
   status.innerHTML='<span class="spinner"></span>Finding rhymes…';status.dataset.state='loading';
@@ -27,9 +27,10 @@ async function search(){clearTimeout(sugTimer);sug.hidden=true;
   catch(e){if(e.name!=='AbortError')showErr('Something went wrong: '+e.message)}}
 function showErr(m){status.dataset.state='error';status.innerHTML=`<div class="err" role="alert">${esc(m)}</div>`;results.innerHTML=''}
 function render(d){
-  const show=$('#tiers').value,tiers=[['perfect','Perfect rhymes','Same sounds from the last stressed vowel'],['near','Near rhymes','Similar consonant families'],['slant','Slant rhymes','Shared vowels (assonance) or consonants (consonance)']].filter(t=>show==='all'||show===t[0]);
+  const show=$('#tiers').value,tiers=[['perfect','Perfect','Same ending sound. ×2 or more is a multi-syllable rhyme.'],['near','Near','Close consonants, same stressed vowel.'],['slant','Slant','Shared vowel or consonant skeleton.']].filter(t=>show==='all'||show===t[0]);
   const total=tiers.reduce((a,t)=>a+(d[t[0]+'_total']||0),0);
-  let meta=`<span class="meta">${esc(d.word)}${d.pronunciations.length?' · /'+esc(d.pronunciations[0])+'/':''}${d.guessed_from?` · not in dictionary, pronunciation guessed from “${esc(d.guessed_from)}”`:''} · ${total} results in ${d.elapsed_ms} ms${d.theme?` · <span class="ontheme">✦ ${d.themed_total} on theme</span>`:''}</span>`;
+  const mm=$('#match').value;
+  let meta=`<span class="meta">${esc(d.word)}${d.pronunciations.length?' · /'+esc(d.pronunciations[0])+'/':''}${d.guessed_from?` · not in dictionary, pronunciation guessed from “${esc(d.guessed_from)}”`:''} · ${total} results in ${d.elapsed_ms} ms${mm?` · multi-syllable ×${esc(mm)}+`:''}${d.theme?` · <span class="ontheme">✦ ${d.themed_total} on theme</span>`:''}</span>`;
   if(!total){status.dataset.state='empty';status.innerHTML=meta;results.innerHTML=`<div class="empty" id="empty">No rhymes found for “${esc(d.word)}”. Try loosening the filters or another word.</div>`;return}
   status.dataset.state='done';status.innerHTML=meta;
   if(d.theme==='related')setTimeout(()=>loadRelated(d.word));
@@ -37,7 +38,7 @@ function render(d){
     const groups={};items.forEach(it=>(groups[it.syllables]=groups[it.syllables]||[]).push(it));
     return `<section class="tier" data-tier="${k}"><h2>${title}<span class="badge b-${k}">${d[k+'_total']}</span> <small>${desc}</small></h2>`+
       Object.keys(groups).sort((a,b)=>a-b).map(s=>`<div class="group"><h3>${s} syllable${s==1?'':'s'}</h3><div class="words">`+
-        groups[s].map(it=>`<span class="w ${it.freq>=4?'common':it.freq<1?'rare':''}${it.conf&&it.conf!=='dict'?' gen':''}${it.themed?' on':''}" data-w="${esc(it.word)}" title="${esc((it.pos.join(', ')||'—')+' · zipf '+it.freq+(it.conf&&it.conf!=='dict'?' · generated pronunciation ('+it.conf+')':'')+(it.themed?' · on theme':''))}">${esc(it.word)}${it.matched_syllables>1?`<sup>×${it.matched_syllables}</sup>`:''}</span>`).join('')+'</div></div>').join('')+'</section>'}).join('')}
+        groups[s].map(it=>`<span class="chip"><span class="w ${it.freq>=4?'common':it.freq<1?'rare':''}${it.conf&&it.conf!=='dict'?' gen':''}${it.themed?' on':''}${it.matched_syllables>1?' multi':''}" data-w="${esc(it.word)}" title="${esc((it.pos.join(', ')||'—')+' · zipf '+it.freq+(it.conf&&it.conf!=='dict'?' · generated pronunciation ('+it.conf+')':'')+(it.themed?' · on theme':'')+(it.matched_syllables>1?' · multi-syllable ×'+it.matched_syllables:''))}">${esc(it.word)}${it.matched_syllables>1?`<sup>×${it.matched_syllables}</sup>`:''}</span>${starBtn(it.word,'word')}</span>`).join('')+'</div></div>').join('')+'</section>'}).join('')}
 const init=new URLSearchParams(location.search).get('w');
 
 // ---------------- tabs ----------------
@@ -76,7 +77,7 @@ function renderLine(d){const all=['perfect','near','slant'].flatMap(t=>d.suggest
   lineOut.innerHTML=`<div class="card meters"><div class="mrow"><span class="ml">${d.prev.syllables}</span><div class="mws">${meter(d.prev)}</div></div>
     <div class="mrow"><span class="ml">${d.line.syllables}</span><div class="mws">${meter(d.line)}</div></div></div>`+
     (all.length?['perfect','near','slant'].filter(t=>d.suggestions[t].length).map(t=>`<section class="tier" data-tier="${t}"><h2>${{perfect:'Perfect endings',near:'Near endings',slant:'Slant endings'}[t]}<span class="badge b-${t}">${d.suggestions[t].length}</span></h2><div class="words">`+
-      d.suggestions[t].map(x=>`<button type="button" class="w sugw${x.themed?' on':''}${x.conf!=='dict'?' gen':''}" data-w="${esc(x.word)}" title="${x.syllables} syllable${x.syllables==1?'':'s'}${x.themed?' · on theme':''}">${esc(x.word)}<sup>${x.syllables}</sup></button>`).join('')+'</div></section>').join('')
+      d.suggestions[t].map(x=>`<span class="chip"><button type="button" class="w sugw${x.themed?' on':''}${x.conf!=='dict'?' gen':''}" data-w="${esc(x.word)}" title="${x.syllables} syllable${x.syllables==1?'':'s'}${x.themed?' · on theme':''}">${esc(x.word)}<sup>${x.syllables}</sup></button>${starBtn(x.word,'word')}</span>`).join('')+'</div></section>').join('')
     :`<div class="empty" id="lineEmpty">No endings found for “${esc(d.end_word)}”. Try a different word at the end of the first line.</div>`)}
 lineOut.addEventListener('click',e=>{const b=e.target.closest('.sugw');if(!b)return;const c=$('#curLine');c.value=(c.value.trim()+' '+b.dataset.w).trim();c.focus();lineHelp()});
 $('#lineGo').addEventListener('click',lineHelp);
@@ -87,17 +88,62 @@ const pad=$('#pad'),padLines=$('#padLines');let padTimer,padSeq=0;
 pad.value=localStorage.getItem('rhymer-pad')||'';
 pad.addEventListener('input',()=>{localStorage.setItem('rhymer-pad',pad.value);$('#padSaved').textContent='Saved';clearTimeout(padTimer);padTimer=setTimeout(padAnalyze,180)});
 const LCOL=['#7A3E1D','#2F6B5E','#6B4C9A','#9A3B52','#3E6A9A','#8A6A1F','#4F7A2E','#A0522D'];
-async function padAnalyze(){const seq=++padSeq,text=pad.value;
-  try{const r=await fetch('api/analyze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})});const d=await r.json();
+function padPlanValue(){const raw=($('#padPlan').value||'').trim();if(!raw||raw.toLowerCase()==='free')return{plan:'',note:''};
+  const plan=raw.toUpperCase();if(!/^[A-H]{2,8}$/.test(plan))return{plan:'',note:'Target scheme should be 2–8 letters, A through H.'};return{plan,note:''}}
+async function padAnalyze(){const seq=++padSeq,text=pad.value;const{plan,note}=padPlanValue();
+  try{const body={text};if(plan)body.plan=plan;
+    const r=await fetch('api/analyze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const d=await r.json();
     if(seq!==padSeq)return;if(!r.ok)throw new Error(d.error);
-    padLines.innerHTML=d.lines.map((l,i)=>!l.words.length?'<li class="blank"></li>':`<li data-n="${i+1}"><span class="syl" title="syllables">${l.syllables}</span><span class="let${l.match?' m-'+l.match:''}" style="--c:${LCOL[(l.letter.charCodeAt(0)-65)%LCOL.length]}" title="${l.match?l.match+' rhyme':'new rhyme sound'}">${l.letter}</span><button type="button" class="endw" data-w="${esc(l.end)}">${esc(l.end)}</button></li>`).join('');
+    padLines.innerHTML=d.lines.map((l,i)=>{
+      if(l.section)return `<li class="sec" data-n="${i+1}"><span class="stag">[${esc(l.section)}]</span></li>`;
+      if(!l.words.length)return '<li class="blank"></li>';
+      const tip=l.plan==='hit'?'matches the target scheme':l.plan==='miss'?'does not match the target scheme':l.plan==='need'?'still needs a rhyme':(l.match?l.match+' rhyme':'new rhyme sound');
+      return `<li data-n="${i+1}"><span class="syl" title="syllables">${l.syllables}</span><span class="let${l.match?' m-'+l.match:''}${l.plan?' plan-'+l.plan:''}" style="--c:${LCOL[(l.letter.charCodeAt(0)-65)%LCOL.length]}" title="${esc(tip)}">${l.letter}</span><button type="button" class="endw" data-w="${esc(l.end)}">${esc(l.end)}</button>${starBtn(l.end,'word')}</li>`}).join('');
     const words=d.lines.reduce((a,l)=>a+l.words.length,0);
-    $('#padStats').innerHTML=d.total_lines?`<span id="scheme">Scheme <b>${esc(d.scheme)}</b></span> · ${d.total_lines} line${d.total_lines==1?'':'s'} · ${words} words · ${d.total_syllables} syllables · <span id="density" title="Rhyme density: average length (in vowels) of the longest rhyme each word makes with the 15 words before it. Typical pop lyrics ≈ 0.7–0.9; dense rap 1.1+">Rhyme density <b>${d.rhyme_density.toFixed(2)}</b></span>`:'Your verse analysis will appear here.';
+    const notes=[note,...(d.plan_notes||[])].filter(Boolean).map(n=>`<span class="pnote">${esc(n)}</span>`).join('');
+    $('#padStats').innerHTML=d.total_lines?`<span id="scheme">Scheme <b>${esc(d.scheme)}</b></span>${d.plan?` · Plan <b>${esc(d.plan)}</b>`:''} · ${d.total_lines} line${d.total_lines==1?'':'s'} · ${words} words · ${d.total_syllables} syllables · <span id="density" title="Rhyme density: average length (in vowels) of the longest rhyme each word makes with the 15 words before it. Typical pop lyrics ≈ 0.7–0.9; dense rap 1.1+">Rhyme density <b>${d.rhyme_density.toFixed(2)}</b></span>${notes}`:(note?`<span class="pnote">${esc(note)}</span>`:'Your verse analysis will appear here.');
   }catch(e){if(seq===padSeq)$('#padStats').innerHTML=`<div class="err" role="alert">Couldn't analyse lyrics: ${esc(e.message)}</div>`}}
 padLines.addEventListener('click',e=>{const b=e.target.closest('.endw');if(!b)return;q.value=b.dataset.w;location.hash='#rhymes';search()});
 $('#padClear').addEventListener('click',()=>{if(!pad.value||confirm('Clear the lyrics pad?')){pad.value='';localStorage.removeItem('rhymer-pad');padAnalyze()}});
-$('#padCopy').addEventListener('click',async()=>{try{await navigator.clipboard.writeText(pad.value);$('#padSaved').textContent='Copied'}catch(e){pad.select();document.execCommand('copy');$('#padSaved').textContent='Copied'}});
-$('#padDownload').addEventListener('click',()=>{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([pad.value],{type:'text/plain'}));a.download='lyrics.txt';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)});
+function copyPad(label){const text=pad.value;const done=()=>{$('#padSaved').textContent=label};
+  navigator.clipboard.writeText(text).then(done).catch(()=>{pad.select();document.execCommand('copy');done()})}
+function downloadText(name,text){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([text],{type:'text/plain'}));a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)}
+$('#padCopy').addEventListener('click',()=>copyPad('Copied'));
+$('#padDownload').addEventListener('click',()=>downloadText('lyrics.txt',pad.value));
+$('#padSuno').addEventListener('click',()=>copyPad('Suno copy'));
+$('#padSunoDl').addEventListener('click',()=>downloadText('lyrics-suno.txt',pad.value));
+const SUNO=['Intro','Verse 1','Pre-Chorus','Chorus','Bridge','Outro'];
+$('#tagRow').innerHTML=SUNO.map(name=>`<button type="button" class="ghost tag" data-tag="${esc(name)}">[${esc(name)}]</button>`).join('');
+$('#tagRow').addEventListener('click',e=>{const b=e.target.closest('[data-tag]');if(!b)return;insertTag(b.dataset.tag)});
+function insertTag(name){const el=pad,i=el.selectionStart??el.value.length,j=el.selectionEnd??i;const before=el.value.slice(0,i),after=el.value.slice(j);
+  const lead=before&&!before.endsWith('\n')?'\n':'';const chunk=lead+'['+name+']\n';el.value=before+chunk+after;const pos=(before+chunk).length;
+  el.focus();el.setSelectionRange(pos,pos);el.dispatchEvent(new Event('input'))}
+const savedPlan=localStorage.getItem('rhymer-plan');if(savedPlan)$('#padPlan').value=savedPlan;
+$('#padPlan').addEventListener('input',()=>{localStorage.setItem('rhymer-plan',$('#padPlan').value);clearTimeout(padTimer);padTimer=setTimeout(padAnalyze,180)});
+// ---------------- word bank (separate from rhymer-pad) ----------------
+const BANK_KEY='rhymer-bank';
+let bankSet=new Set();
+function bankRead(){try{const a=JSON.parse(localStorage.getItem(BANK_KEY)||'[]');return Array.isArray(a)?a.filter(x=>x&&typeof x.text==='string'&&x.text&&x.text.length<=200).slice(0,200):[]}catch(e){return []}}
+function bankHas(text){return bankSet.has(String(text||'').toLowerCase())}
+function renderBank(){const a=bankRead();bankSet=new Set(a.map(x=>x.text.toLowerCase()));
+  const html=a.length?a.map(x=>`<span class="bankitem"><span class="banktxt">${esc(x.text)}</span><button type="button" class="ghost bcopy" data-copy="${esc(x.text)}">Copy</button><button type="button" class="ghost bins" data-insert="${esc(x.text)}" data-kind="${esc(x.kind||'word')}">Insert</button><button type="button" class="star on" data-save="${esc(x.text)}" data-kind="${esc(x.kind||'word')}" aria-pressed="true" aria-label="Remove from word bank">★</button></span>`).join(''):'<p class="hint">Nothing saved yet. Tap ★ on a rhyme, phrase, or line.</p>';
+  ['#bankList','#padBank'].forEach(id=>{const n=$(id);if(n)n.innerHTML=html});
+  const n=a.length;const c=$('#bankCount');if(c)c.textContent=String(n);const c2=$('#padBankCount');if(c2)c2.textContent=String(n);
+  document.querySelectorAll('.star[data-save]').forEach(s=>{const on=bankHas(s.dataset.save);s.classList.toggle('on',on);s.setAttribute('aria-pressed',on?'true':'false');s.setAttribute('aria-label',on?'Remove from word bank':'Save to word bank')})}
+function bankWrite(a){localStorage.setItem(BANK_KEY,JSON.stringify(a.slice(0,200)));renderBank()}
+function bankToggle(text,kind){text=String(text||'').trim().slice(0,200);if(!text)return;const a=bankRead();const i=a.findIndex(x=>x.text.toLowerCase()===text.toLowerCase());
+  if(i>=0)a.splice(i,1);else a.unshift({text,kind:kind||'word'});bankWrite(a)}
+function starBtn(text,kind){const on=bankHas(text);return `<button type="button" class="star${on?' on':''}" data-save="${esc(text)}" data-kind="${kind||'word'}" aria-pressed="${on}" aria-label="${on?'Remove from word bank':'Save to word bank'}">★</button>`}
+function insertIntoPad(text,kind){const el=pad;const i=el.selectionStart??el.value.length,j=el.selectionEnd??i;const before=el.value.slice(0,i),after=el.value.slice(j);let chunk;
+  if(kind==='word'){const L=before&&!/\s$/.test(before)?' ':'';const R=after&&!/^\s/.test(after)?' ':'';chunk=L+text+R}
+  else{const lead=before&&!before.endsWith('\n')?'\n':'';const trail=after===''||after.startsWith('\n')?'':'\n';chunk=lead+text+trail}
+  el.value=before+chunk+after;const pos=(before+chunk).length;el.focus();try{el.setSelectionRange(pos,pos)}catch(e){}
+  el.dispatchEvent(new Event('input'));if(location.hash!=='#pad')location.hash='#pad'}
+document.addEventListener('click',e=>{const s=e.target.closest('.star');if(!s)return;e.preventDefault();e.stopPropagation();bankToggle(s.dataset.save,s.dataset.kind)},true);
+document.addEventListener('click',e=>{const b=e.target.closest('.bins');if(!b)return;e.preventDefault();insertIntoPad(b.dataset.insert,b.dataset.kind||'word')});
+document.addEventListener('click',e=>{const b=e.target.closest('.bcopy');if(!b)return;e.preventDefault();
+  navigator.clipboard.writeText(b.dataset.copy).then(()=>{b.textContent='Copied'}).catch(()=>{});setTimeout(()=>{b.textContent='Copy'},900)});
+renderBank();
 // restore theme toggle + initial tab
 (async()=>{const on=localStorage.getItem('rhymer-theme-on');await loadThemes();  // default: on, "Related to my word"
   if(on===null||on==='1'){tToggle.checked=true;tToggle.setAttribute('aria-checked','true');tSel.disabled=tOnly.disabled=false;document.body.classList.toggle('themed',!!tSel.value)}
@@ -117,8 +163,8 @@ async function aiGet(kind,body,timeout=30000){const key='rhymer-c:'+AI_V+kind+':
     let d;try{d=await r.json()}catch(e){d={}}if(!r.ok)throw new Error(d.error||('HTTP '+r.status));lsSet(key,d);return d}
   catch(e){throw e.name==='AbortError'?new Error('timed out'):e}finally{clearTimeout(to)}}
 function chip(x,ai){const t=x.tier,sym=t==='perfect'?'●':t==='near'?'◐':'○';
-  return `<span class="w rel t-${t}${x.conf&&x.conf!=='dict'?' gen':''}${ai?' ai':''}" data-w="${esc(x.word)}" title="${esc(TIERNAME[t]+(x.assoc!=null?' · association '+x.assoc:'')+(x.matched>1?' · '+x.matched+' syllables match':'')+(ai?' · AI brainstorm, verified':''))}">${esc(x.word)}<sup>${ai?'✨':sym}${x.matched>1?'×'+x.matched:''}</sup></span>`}
-function phraseBtn(p,ai){return `<button type="button" class="phrase t-${p.tier}${ai?' ai':''}" data-copy="${esc(p.text)}" title="${esc(TIERNAME[p.tier]+(p.source?' · '+({ai:'lyric bank',wikt:'idiom',cn:'ConceptNet',combo:'word combo'}[p.source]||p.source):'')+(ai?' · AI brainstorm, verified':''))}">${esc(p.text)}${ai?' ✨':''}</button>`}
+  return `<span class="chip"><span class="w rel t-${t}${x.conf&&x.conf!=='dict'?' gen':''}${ai?' ai':''}" data-w="${esc(x.word)}" title="${esc(TIERNAME[t]+(x.assoc!=null?' · association '+x.assoc:'')+(x.matched>1?' · '+x.matched+' syllables match':'')+(ai?' · AI brainstorm, verified':''))}">${esc(x.word)}<sup>${ai?'✨':sym}${x.matched>1?'×'+x.matched:''}</sup></span>${starBtn(x.word,'word')}</span>`}
+function phraseBtn(p,ai){return `<span class="chip"><button type="button" class="phrase t-${p.tier}${ai?' ai':''}" data-copy="${esc(p.text)}" title="${esc(TIERNAME[p.tier]+(p.source?' · '+({ai:'lyric bank',wikt:'idiom',cn:'ConceptNet',combo:'word combo'}[p.source]||p.source):'')+(ai?' · AI brainstorm, verified':''))}">${esc(p.text)}${ai?' ✨':''}</button>${starBtn(p.text,'phrase')}</span>`}
 const REL_CAP={perfect:30,multi:24,slant:30,phrase:16},relOpen=new Set();
 function renderRel(slot,d,bs){const g={perfect:[],multi:[],slant:[],phrase:[]},seen=new Set();
   d.related.forEach(x=>{g[x.group].push(chip(x,false));seen.add(x.word)});d.phrases.forEach(p=>{g.phrase.push(phraseBtn(p,false));seen.add(p.text)});
@@ -181,13 +227,13 @@ function makeAI(box,{getInput,onInsert}){
       (ends.length?`<div class="words fb">${ends.map(x=>`<button type="button" class="w fbw" data-copy="${esc(x.word)}">${esc(x.word)}<sup>${x.syllables}</sup></button>`).join('')}</div>`:'')}
   function row(x){const det=[x.multi?`×${x.multi+1} multi`:'',x.internal?`${x.internal} internal`:''].filter(Boolean);
     return `<li class="ail t-${x.tier}"><span class="sc s-${scoreCls(x.score)}" title="Line score: end-rhyme strength, multi-syllable match, internal rhymes, syllable fit, freshness${x.sense!=null?', editor sense '+x.sense+'/10':''}">${x.score}</span><span class="tb t-${x.tier}">${x.tier==='assonant'?'vowel':x.tier}</span>${det.map(t=>`<span class="tb tx">${t}</span>`).join('')}<span class="txt">${esc(x.text)}</span><span class="syl" title="syllables">${x.syllables} syl</span>
-      <button type="button" class="ghost cp" data-copy="${esc(x.text)}" aria-label="Copy line">Copy</button>${onInsert?`<button type="button" class="ghost ins" data-t="${esc(x.text)}">Insert</button>`:''}</li>`}
+      <button type="button" class="ghost cp" data-copy="${esc(x.text)}" aria-label="Copy line">Copy</button>${starBtn(x.text,'line')}${onInsert?`<button type="button" class="ghost ins" data-t="${esc(x.text)}">Insert</button>`:''}</li>`}
   const senseOf=new Map();
   async function rank(line,lines){lines=lines.slice(0,40).map(s=>String(s).slice(0,200));const body={line,lines,keep:40};
     if(lines.some(t=>senseOf.has(t)))body.sense=lines.map(t=>senseOf.has(t)?senseOf.get(t):6);
     const rr=await fetch('api/rank_lines',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     if(!rr.ok)return lines.map(t=>({text:t,tier:'none',syllables:0,score:0,multi:0,internal:0}));return(await rr.json()).lines}
-  function showNext(){const fresh=pool.filter(x=>!shownTexts.has(x.text)&&x.tier!=='none'&&x.score>=35).slice(0,8);fresh.forEach(x=>shownTexts.add(x.text));
+  function showNext(){const fresh=pool.filter(x=>!shownTexts.has(x.text)&&x.tier!=='none'&&x.score>=40).slice(0,8);fresh.forEach(x=>shownTexts.add(x.text));
     list.insertAdjacentHTML('beforeend',fresh.map(row).join(''));return fresh.length}
   async function run(isMore){if(busy)return;const inp=getInput();if(!inp||!inp.line.trim()){box.hidden=false;box.dataset.state='error';st.innerHTML='<div class="err" role="alert">Write a lyric line first.</div>';return}
     busy=true;box.hidden=false;const line=inp.line.trim().slice(0,200);

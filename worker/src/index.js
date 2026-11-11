@@ -12,6 +12,7 @@ export const MOODS = ["any", "related", "love", "heartbreak", "night", "ocean", 
   "journey", "war", "faith", "time", "home", "food", "animals", "body", "music", "freedom", "hopeful", "dark", "nostalgic", "angry", "dreamy"];
 const RATE = { perMinute: 20, perDay: 400 };
 const CACHE_TTL = 604800;
+const JUDGE_MS_DEFAULT = 8000;
 const hits = new Map(); // best-effort per-isolate limiter (plus optional RATE_LIMITER binding)
 const memo = new Map(); // tiny per-isolate LRU of model results
 
@@ -91,6 +92,7 @@ export function buildMessages(b) {
       `Best of all: multi-syllable rhymes that echo the vowel sounds of the last syllables "${tail2}" vowel for vowel. ` +
       `Never end on filler (though, so, too, oh, yeah, it, now, then), never end on "${end}" itself, and don't reuse an end word. ` +
       `Never force a rhyme: every line must make sense and sound like something a real artist would sing. ` +
+      `Do not glue an adjective onto go, show, slow, or woe. Failures, not models: "moments lost in the silent slow", "midnight hours tick by in a steady go", "a lonely figure in the distant show". ` +
       `Work backwards: choose a strong rhyme word or phrase first, then build the whole line so it lands there naturally and grammatically ` +
       `(a noun after "the/a/my", a verb where a verb belongs; e.g. for "drum": "till the feeling in my chest goes numb" — never nonsense like "snapping to the succumb").\n` +
       `2. RHYTHM: ${syl}, natural stress, easy to sing.\n` +
@@ -105,7 +107,7 @@ export function buildJudge(b, lines) {
     { role: "user", content: `Previous lyric line: "${b.line.trim()}"\nCandidate next lines:\n${lines.map((l, i) => `${i + 1}. ${l}`).join("\n")}\n\n` +
       `Score each candidate 0-10 as a next line a top songwriter would keep. Be harsh: most candidates deserve 3-6; 9-10 only for lines good enough for a hit record. ` +
       `Check: it makes literal or poetic sense, grammar is natural (no missing words, no odd word order), ` +
-      `the final rhyme word lands naturally (forced, odd or nonsense rhyme words like "kneading bread with hands of dough" score 0-3), ` +
+      `the final rhyme word lands naturally (forced, odd or nonsense rhyme words like "kneading bread with hands of dough", "silent slow", "steady go" score 0-3), ` +
       `vivid and fresh imagery scores higher, clichés lower. Reply with ONLY a JSON array of ${lines.length} integers in the same order.` },
   ];
 }
@@ -126,6 +128,7 @@ export function buildBrainstorm(b) {
       `"multi": 20 multi-syllable or compound rhymes — longer words or 2-3 word phrases whose final syllables rhyme with "${b.word}" (e.g. for "snow": "let it go", "below", "overflow"),\n` +
       `"slant": 20 slant / assonance rhymes (same stressed vowel, similar ending),\n` +
       `"phrases": 30 vivid 2-5 word lyric phrases that END with a rhyme for "${b.word}" and evoke its theme.\n` +
+      `Only real common words. Never invent a spelling. "let it go" is sayable; "in the slow" and "through the woe" are not. ` +
       `Lowercase, no explanations, ONLY the JSON object.` },
   ];
 }
@@ -155,18 +158,26 @@ export function parseLines(text, input, exclude = [], max = LIMITS.count) {
   }
   return out.slice(0, max);
 }
+function parseJsonObject(text) {
+  const m = String(text || "").match(/\{[\s\S]*\}/);
+  if (!m) return null;
+  const raw = m[0];
+  try { return JSON.parse(raw); } catch (e) { /* trailing commas are common */ }
+  try { return JSON.parse(raw.replace(/,\s*([}\]])/g, "$1")); } catch (e) { return null; }
+}
 export function parseBrainstorm(text, word) {
   const out = { perfect: [], multi: [], slant: [], phrases: [] };
-  const m = String(text || "").match(/\{[\s\S]*\}/); let j = null;
-  if (m) { try { j = JSON.parse(m[0]); } catch (e) { j = null; } }
-  if (!j || typeof j !== "object") return out;
+  const j = parseJsonObject(text);
+  if (!j || typeof j !== "object" || Array.isArray(j)) return out;
   const seen = new Set([word]); let total = 0;
   for (const k of Object.keys(out)) {
     const arr = Array.isArray(j[k]) ? j[k] : [];
     for (let s of arr) {
       if (typeof s !== "string") continue;
       s = clean(s).toLowerCase().replace(/[^a-z' \-]/g, "").replace(/\s+/g, " ").trim();
-      if (!s || s.length > 60 || s.split(" ").length > 6 || seen.has(s) || total >= 190) continue;
+      const parts = s.split(" ").filter(Boolean);
+      // "<b>" used to survive as the one-letter token "b"
+      if (!s || s.length > 60 || parts.length > 6 || parts.some(w => w.length < 2) || seen.has(s) || total >= 190) continue;
       seen.add(s); out[k].push(s); total++;
     }
   }
@@ -181,6 +192,15 @@ async function runModel(env, model, messages, max_tokens, temperature) {
   const input = { messages, max_tokens, temperature, top_p: 0.95 };
   if (/gpt-oss/.test(model)) input.reasoning = { effort: "low" };
   return modelText(await env.AI.run(model, input));
+}
+// The lines are already written. A stalled editor pass must not turn that into a 502.
+function judgeOrNull(env, model, b, lines) {
+  const ms = Number(env.JUDGE_MS) > 0 ? Number(env.JUDGE_MS) : JUDGE_MS_DEFAULT;
+  let timer;
+  const timed = new Promise(resolve => { timer = setTimeout(() => resolve(null), ms); });
+  const work = runModel(env, model, buildJudge(b, lines), 20 + 5 * lines.length, 0)
+    .then(text => parseJudge(text, lines.length), () => null);
+  return Promise.race([work, timed]).finally(() => clearTimeout(timer));
 }
 
 export default {
@@ -218,9 +238,10 @@ export default {
         const lines = parseLines(text, b.line, b.exclude || []);
         if (!lines.length) return json(502, { error: "model returned no usable lines" }, h);
         body = { lines, model };
-        // editor pass: the model is a better judge than writer — score sense / naturalness of every candidate (cheap: ~4 tokens per line)
+        // editor pass: sense can only lower a line later. If it stalls or errors, the lines still go out.
         if (b.judge !== false && lines.length >= 2) {
-          try { const sense = parseJudge(await runModel(env, model, buildJudge(b, lines), 20 + 5 * lines.length, 0), lines.length); if (sense) body.sense = sense; } catch (e) { /* non-fatal */ }
+          const sense = await judgeOrNull(env, model, b, lines);
+          if (sense) body.sense = sense;
         }
       } else {
         const text = await runModel(env, model, buildBrainstorm(b), 1400, 0.7);

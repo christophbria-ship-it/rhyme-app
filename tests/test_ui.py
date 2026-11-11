@@ -63,10 +63,39 @@ def test_error_states(page, base_url):
     page.unroute("**/api/rhymes*"); page.route("**/api/rhymes*", lambda r: r.abort())
     page.fill("#q", "dog"); page.click("#go"); expect(page.locator(".err")).to_be_visible(); shot(page, "error-network")
 
+def test_black_contrast_at_360(page, base_url):
+    if page.size_name != "mobile": return
+    page.set_viewport_size({"width": 360, "height": 740})
+    page.goto(base_url + "/?w=snow")
+    expect(page.locator("#status")).to_have_attribute("data-state", "done", timeout=30000)
+    ratios = page.evaluate("""() => {
+      const L = css => { const [r,g,b] = css.match(/\\d+/g).map(Number).slice(0,3).map(v => { v/=255; return v<=0.04045 ? v/12.92 : Math.pow((v+0.055)/1.055, 2.4); }); return 0.2126*r+0.7152*g+0.0722*b; };
+      const ratio = (fg, bg) => { const a=L(fg), b=L(bg); return (Math.max(a,b)+0.05)/(Math.min(a,b)+0.05); };
+      const cs = el => getComputedStyle(el);
+      const body = cs(document.body), h1 = cs(document.querySelector('h1')), sub = cs(document.querySelector('.sub')), go = cs(document.querySelector('#go'));
+      return {
+        text: ratio(body.color, body.backgroundColor),
+        title: ratio(h1.color, body.backgroundColor),
+        muted: ratio(sub.color, body.backgroundColor),
+        button: ratio(go.color, go.backgroundColor),
+        width: document.documentElement.scrollWidth
+      };
+    }""")
+    assert ratios["text"] >= 4.5 and ratios["title"] >= 4.5 and ratios["muted"] >= 4.5 and ratios["button"] >= 4.5, ratios
+    assert ratios["width"] <= 360
+    page.goto(base_url + "/#pad")
+    verse = "saved on this device\nstill here"
+    page.fill("#pad", verse)
+    assert page.evaluate("localStorage.getItem('rhymer-pad')") == verse
+    page.reload()
+    expect(page.locator("#pad")).to_have_value(verse)
+    assert page.evaluate("document.documentElement.scrollWidth") <= 360
+
 def test_theme(page, base_url):
     page.goto(base_url + "/?w=cat"); expect(page.locator("#status")).to_have_attribute("data-state", "done")
-    assert page.evaluate("getComputedStyle(document.body).backgroundColor") == "rgb(251, 247, 239)"
-    assert page.evaluate("getComputedStyle(document.querySelector('h1')).color") == "rgb(122, 62, 29)"
+    assert page.evaluate("getComputedStyle(document.body).backgroundColor") == "rgb(0, 0, 0)"
+    assert page.evaluate("getComputedStyle(document.querySelector('h1')).color") == "rgb(232, 181, 106)"
+    assert page.evaluate("getComputedStyle(document.body).color") == "rgb(251, 247, 239)"
     assert "Fraunces" in page.evaluate("getComputedStyle(document.querySelector('h1')).fontFamily")
     assert page.locator(".logo").is_visible()
     r = page.evaluate("getComputedStyle(document.querySelector('.w')).borderRadius"); assert float(r.rstrip("px")) >= 20
@@ -123,6 +152,56 @@ def test_lyrics_pad(page, base_url):
     expect(page.locator("#q")).to_have_value("feet"); expect(page.locator('.w[data-w="beat"]').first).to_be_visible()
     page.goto(base_url + "/#pad"); page.once("dialog", lambda d: d.accept()); page.click("#padClear")
     expect(page.locator("#pad")).to_have_value(""); expect(page.locator("#padStats")).to_contain_text("will appear here")
+
+def test_word_bank_suno_scheme_and_multis(page, base_url):
+    page.goto(base_url + "/?w=nation"); expect(page.locator("#status")).to_have_attribute("data-state", "done", timeout=30000)
+    page.select_option("#match", "2")
+    expect(page.locator("#status")).to_contain_text("multi-syllable ×2+")
+    sups = page.locator('#results > .tier .w sup').all_inner_texts()
+    assert sups and all(s.startswith("×") and int(s[1:]) >= 2 for s in sups)
+    assert page.locator('#results > .tier[data-tier="slant"]').count() == 0
+    word = page.locator('#results > .tier .w').first.get_attribute("data-w")
+    page.locator('#results > .tier .star').first.click()
+    expect(page.locator("#bankCount")).to_have_text("1")
+    page.locator("#bankBox").evaluate("el => el.open = true")
+    assert word in page.locator("#bankList").inner_text()
+    page.goto(base_url + "/#pad")
+    page.fill("#pad", "[Verse 1]\nkeep this line")
+    page.locator("#padBankBox").evaluate("el => el.open = true")
+    page.locator("#padBank .bins").click()
+    expect(page.locator("#pad")).to_have_value("[Verse 1]\nkeep this line " + word)
+    assert page.evaluate("localStorage.getItem('rhymer-pad')").startswith("[Verse 1]\nkeep this line")
+    page.once("dialog", lambda d: d.accept()); page.click("#padClear")
+    expect(page.locator("#pad")).to_have_value("")
+    assert page.evaluate("localStorage.getItem('rhymer-bank')") and word in page.evaluate("localStorage.getItem('rhymer-bank')")
+    page.click('[data-tag="Chorus"]')
+    expect(page.locator("#pad")).to_have_value("[Chorus]\n")
+    page.fill("#pad", "[Chorus]\nlet it go\n\n[Verse 1]\nthrough the snow")
+    page.context.grant_permissions(["clipboard-read", "clipboard-write"])
+    page.click("#padSuno")
+    expect(page.locator("#padSaved")).to_have_text("Suno copy")
+    assert page.evaluate("navigator.clipboard.readText()") == page.locator("#pad").input_value()
+    with page.expect_download() as dl:
+        page.click("#padSunoDl")
+    got = dl.value
+    assert got.suggested_filename == "lyrics-suno.txt"
+    assert open(got.path(), encoding="utf-8").read() == page.locator("#pad").input_value()
+    expect(page.locator("#scheme")).to_contain_text("A A")
+    expect(page.locator("#padLines .stag")).to_have_count(2)
+    page.fill("#pad", "the cat\nthe dog\nthe hat\nthe log")
+    page.fill("#padPlan", "AABB")
+    expect(page.locator(".pnote").first).to_contain_text("should rhyme")
+    expect(page.locator(".plan-miss").first).to_be_visible()
+    page.fill("#padPlan", "ABAB")
+    expect(page.locator(".plan-hit").first).to_be_visible()
+    expect(page.locator(".pnote")).to_have_count(0)
+    page.fill("#padPlan", "nope")
+    expect(page.locator(".pnote")).to_contain_text("A through H")
+    if page.size_name == "mobile":
+        page.set_viewport_size({"width": 360, "height": 740})
+        page.locator("#bankBox").evaluate("el => el.open = true")
+        page.locator("#padBankBox").evaluate("el => el.open = true")
+        assert page.evaluate("document.documentElement.scrollWidth") <= 360
 
 def test_lyrics_pad_error(page, base_url):
     page.route("**/api/analyze", lambda r: r.fulfill(status=500, content_type="application/json", body='{"error":"internal error"}'))

@@ -22,7 +22,7 @@ for f in ("app.css", "app.js", "manifest.webmanifest"): shutil.copy(os.path.join
 shutil.copytree(os.path.join(ROOT, "static", "icons"), os.path.join(OUT, "icons"))
 shutil.copy(os.path.join(ROOT, "static", "api-shim.js"), OUT)
 html = open(os.path.join(ROOT, "static", "index.html")).read()
-html = html.replace('<meta name="theme-color" content="#FBF7EF">', """<meta name="theme-color" content="#7A3E1D">
+html = html.replace('<meta name="theme-color" content="#000000">', """<meta name="theme-color" content="#000000">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png"><link rel="icon" type="image/svg+xml" href="icons/icon.svg">
 <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png">

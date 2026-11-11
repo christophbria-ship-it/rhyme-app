@@ -61,6 +61,35 @@ def test_line_helper_fits_meter(engine):
     sug = h["suggestions"]["perfect"]; assert sug and all(x["syllables"] == 3 for x in sug)
     assert {"incomplete", "obsolete"} & {x["word"] for x in sug}
 
+def test_section_tags_are_not_lyric_lines(engine):
+    from engine import suno_export
+    src = "[Chorus]\nlet it go\n\n[Verse 1]\nthrough the snow"
+    a = engine.analyze(src)
+    assert suno_export(src) == src
+    assert "\n".join(l["text"] for l in a["lines"]) == src
+    assert [l.get("section") for l in a["lines"]] == ["Chorus", None, None, "Verse 1", None]
+    assert a["scheme"] == "A A" and a["total_lines"] == 2
+    assert engine.analyze("[Pre-Chorus]\nthe cat\nthe hat")["scheme"] == "AA"
+
+def test_target_scheme_marks(engine):
+    text = "the cat\nthe dog\nthe hat\nthe log"  # sounded ABAB
+    hit = engine.analyze(text, plan="ABAB")
+    assert hit["plan"] == "ABAB" and hit["plan_notes"] == []
+    assert [l.get("plan") for l in hit["lines"]] == ["anchor", "anchor", "hit", "hit"]
+    miss = engine.analyze(text, plan="AABB")
+    assert any('should rhyme with' in n for n in miss["plan_notes"])
+    assert "dog" in miss["plan_notes"][0]
+    short = engine.analyze("the cat\nthe dog", plan="ABAB")
+    assert any("still needs a rhyme" in n for n in short["plan_notes"])
+    assert "plan" not in engine.analyze(text)
+    with pytest.raises(ValueError): engine.analyze(text, plan="nope")
+
+def test_min_match_keeps_multis_only(engine):
+    r = engine.rhymes("nation", min_match=2, limit=50)
+    assert r["perfect"] and all(x["matched_syllables"] >= 2 for x in r["perfect"])
+    assert r["near"] == [] and r["slant"] == []
+    with pytest.raises(ValueError): engine.rhymes("nation", min_match=0)
+
 def test_line_helper_theme_and_fallback(engine):
     h = engine.line_help("The waves were crashing at my feet", "My", theme="love")
     flags = [x["themed"] for x in h["suggestions"]["perfect"]]; assert flags == sorted(flags, reverse=True)

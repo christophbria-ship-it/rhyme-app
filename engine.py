@@ -86,9 +86,12 @@ class Engine:
         return out
 
     def rhymes(self, word, syllables=None, pos=None, min_len=None, max_len=None,
-               min_freq=None, sort="score", limit=200, include=("perfect", "near", "slant"), theme=None, theme_only=False):
+               min_freq=None, sort="score", limit=200, include=("perfect", "near", "slant"), theme=None, theme_only=False,
+               min_match=None):
         w = self.normalize(word)
         if not WORD_RE.match(w): raise ValueError("invalid word")
+        if min_match is not None and not (isinstance(min_match, int) and not isinstance(min_match, bool) and 1 <= min_match <= 8):
+            raise ValueError("invalid min_match")
         if theme and theme != "related" and theme not in self.themes: raise ValueError("unknown theme")
         tset = (self.related_set(w) if theme == "related" else self.themes.get(theme)) if theme else None
         cd = self._candidates(w)
@@ -108,6 +111,7 @@ class Engine:
                 if min_len and inf["len"] < min_len: continue
                 if max_len and inf["len"] > max_len: continue
                 if min_freq is not None and inf["freq"] < min_freq: continue
+                if min_match and m < min_match: continue  # multi-syllable: how many ending syllables match
                 items.append({"word": c, "syllables": inf["syl"], "freq": inf["freq"], "pos": inf["pos"],
                               "len": inf["len"], "matched_syllables": m, "score": sc, "conf": inf["conf"],
                               "themed": bool(tset) and c in tset})
@@ -132,14 +136,27 @@ class Engine:
         return {"word": raw, "norm": w, "syllables": len(stress), "stress": stress, "known": not guessed,
                 "keys": sorted({keys(p)[0] for p in prons}), "fkeys": sorted({keys(p)[1] for p in prons})}
 
-    def analyze(self, text):
-        """Per-line syllable counts, stress patterns and a rhyme scheme (letters restart at each blank-line stanza)."""
+    def analyze(self, text, plan=None):
+        """Per-line syllable counts, stress patterns and a rhyme scheme (letters restart at each blank-line stanza).
+
+        A line that is only a section tag such as ``[Chorus]`` is kept verbatim and is not a lyric line.
+        ``plan`` (AABB, ABAB, …) adds ``plan_notes`` and a ``plan`` mark on each lyric line. Letters stay.
+        """
         if text is None: raise ValueError("missing text")
         if len(text) > 10000: raise ValueError("text too long")
+        if plan in ("", "free"): plan = None
+        if plan is not None:
+            if not isinstance(plan, str) or not PLAN_RE.fullmatch(plan.upper()): raise ValueError("invalid plan")
+            plan = plan.upper()
         lines, scheme_parts, stanza = [], [], []
         groups = []  # (letter, perfect keys, family keys, end word) for the current stanza
         def letter(i): return chr(65 + i) if i < 26 else "Z"
         for raw in text.split("\n")[:400]:
+            sec = SECTION_RE.match(raw)
+            if sec:
+                lines.append({"text": raw, "words": [], "syllables": 0, "end": None, "letter": None, "match": None,
+                              "section": sec.group(1).strip()})
+                continue
             toks = self.TOKEN.findall(raw)
             if not toks:
                 lines.append({"text": raw, "words": [], "syllables": 0, "end": None, "letter": None, "match": None})
@@ -164,8 +181,14 @@ class Engine:
                           "syllables": sum(x["syllables"] for x in ws), "stress": " ".join(x["stress"] for x in ws),
                           "end": end["norm"], "letter": let, "match": match})
         if stanza: scheme_parts.append("".join(stanza))
-        return {"lines": lines, "scheme": " ".join(scheme_parts), "rhyme_density": self.rhyme_density(text[:10000]),
-                "total_lines": sum(1 for l in lines if l["words"]), "total_syllables": sum(l["syllables"] for l in lines)}
+        out = {"lines": lines, "scheme": " ".join(scheme_parts), "rhyme_density": self.rhyme_density(_without_sections(text)[:10000]),
+               "total_lines": sum(1 for l in lines if l["words"]), "total_syllables": sum(l["syllables"] for l in lines)}
+        if plan:
+            notes, marks = plan_marks(lines, plan)
+            out["plan"] = plan
+            out["plan_notes"] = notes
+            for i, mark in marks.items(): lines[i]["plan"] = mark
+        return out
 
     def line_help(self, prev, line="", theme=None, limit=40):
         """Suggest end words that rhyme with the previous line and complete `line` to the same syllable count."""
@@ -198,6 +221,58 @@ it's don't can't won't ain't you're we're they're im""".split())
 PARTICLES = set("up down out in on off away back over around through along apart aside by".split())
 FILLER = set("though tho so too oh ooh yeah yea uh huh it that this then and but or the a an to of just anyway somehow indeed".split())
 DETS = {"the", "a", "an", "my", "your", "his", "her", "our", "their", "this", "every", "each"}
+SECTION_RE = re.compile(r"^\s*\[([^\[\]]{1,40})\]\s*$")
+PLAN_RE = re.compile(r"^[A-H]{2,8}$")
+
+def _without_sections(text):
+    return "\n".join("" if SECTION_RE.match(raw) else raw for raw in (text or "").split("\n"))
+
+def suno_export(text):
+    """Lossless Suno copy: section tags and line breaks are the lyric text, unchanged."""
+    if not isinstance(text, str): raise ValueError("missing text")
+    if len(text) > 10000: raise ValueError("text too long")
+    return text
+
+def plan_marks(lines, plan):
+    """Compare sounded scheme letters with a target pattern. Returns (notes, {line_index: hit|miss|need})."""
+    notes, marks = [], {}
+    stanzas, cur = [], []
+    for i, l in enumerate(lines):
+        if l.get("section"): continue
+        if not l["words"]:
+            if cur: stanzas.append(cur); cur = []
+            continue
+        cur.append(i)
+    if cur: stanzas.append(cur)
+    for st in stanzas:
+        slots = {}
+        for n, i in enumerate(st):
+            slot = plan[n % len(plan)]
+            slots.setdefault(slot, []).append(i)
+            earlier = [j for j in slots[slot] if j != i]
+            if earlier and lines[i]["letter"] == lines[earlier[0]]["letter"]:
+                marks[i] = "hit"
+            elif earlier:
+                marks[i] = "miss"
+                notes.append('Line %d "%s" should rhyme with line %d "%s".' % (i + 1, lines[i]["end"], earlier[0] + 1, lines[earlier[0]]["end"]))
+            else:
+                marks[i] = "anchor"
+            for j in st[:n]:
+                if plan[(st.index(j)) % len(plan)] == slot: continue
+                if lines[j]["letter"] == lines[i]["letter"]:
+                    marks[i] = "miss"
+                    note = 'Line %d "%s" rhymes with line %d "%s", but %s wants a different sound.' % (i + 1, lines[i]["end"], j + 1, lines[j]["end"], plan)
+                    if note not in notes: notes.append(note)
+                    break
+        for slot, idxs in slots.items():
+            if plan.count(slot) >= 2 and len(idxs) == 1 and marks.get(idxs[0]) == "anchor":
+                i = idxs[0]
+                marks[i] = "need"
+                notes.append('"%s" still needs a rhyme.' % lines[i]["end"])
+    return notes, marks
+# Easy landings the model glues on ("silent slow", "steady go", "distant show").
+WEAK_END = {"go", "show", "slow", "low", "woe", "so", "though", "tho"}
+PREP = set("in on through from by at to of with for over under into across around upon within without along".split())
 TIER_Q = {"perfect": 1.0, "near": 0.85, "slant": 0.7}
 ASSONANT_Q = 0.5
 REDUCED = {"AH", "IH", "UH"}
@@ -455,6 +530,10 @@ def _verify(self, word, items):
         last = self.info.get(toks[-1])
         if not last or not last["pos"] or last["freq"] < 2.8 or len(toks[-1]) < 2 or (len(toks) == 1 and toks[-1] in REL_STOP) or toks[-1] in FILLER: continue
         if any(x not in self.info or self.info[x]["freq"] < 2.5 for x in toks): continue
+        # "in the slow" / "through the woe": function words plus a non-noun or a thin rhyme.
+        # "let it go" stays (it has a verb). "in the glow" stays (glow is a common noun).
+        if len(toks) > 1 and all(x in FUNC or x in PREP or x in DETS or x in REL_STOP for x in toks[:-1]):
+            if "n" not in last["pos"] or toks[-1] in WEAK_END or last["freq"] < 3.6: continue
         if len(toks) > 1:
             k2 = " ".join(toks[:2]); pre[k2] = pre.get(k2, 0) + 1; ends[toks[-1]] = ends.get(toks[-1], 0) + 1
             if pre[k2] > 2 or ends[toks[-1]] > 2: continue  # "gonna be the light / might / sight / right ..."
@@ -533,7 +612,7 @@ def _rank_lines(self, line, lines, keep=8, sense=None):
         a = self.analyze(text.strip())["lines"][0] if text.strip() else {"words": []}
         if not a["words"]:
             out.append({"text": text, "end": None, "tier": "none", "syllables": 0, "syllable_diff": src["syllables"], "multi": 0,
-                        "internal": 0, "filler": False, "cliche": False, "assoc": None, "sense": None, "score": 0, "_i": i}); continue
+                        "internal": 0, "filler": False, "cliche": False, "forced": False, "assoc": None, "sense": None, "score": 0, "_i": i}); continue
         e = a["end"]
         if e == end: t = "repeat"
         elif e in tiers: t = tiers[e]
@@ -548,6 +627,8 @@ def _rank_lines(self, line, lines, keep=8, sense=None):
         parrot = len(toks) >= 2 and len(stoks) >= 2 and toks[-2].lower() == stoks[-2].lower() and t != "repeat"
         if parrot: multi = 0
         internal = _internal(self, toks[:-1] + [e])
+        prev = toks[-2].lower().strip("'") if len(toks) >= 2 else ""
+        forced = t not in ("none", "repeat") and e in WEAK_END and "adj" in (self.info.get(prev) or {}).get("pos", [])
         sd = abs(a["syllables"] - src["syllables"])
         low = " " + " ".join(x.lower() for x in toks) + " "
         cliche = any(" " + c + " " in low for c in CLICHES)
@@ -559,6 +640,7 @@ def _rank_lines(self, line, lines, keep=8, sense=None):
         if parrot: sc -= 10
         if len(toks) >= 2 and toks[-2].lower() in DETS and e in self.info and self.info[e]["pos"] and "n" not in self.info[e]["pos"]: sc -= 20  # "to the succumb"
         if not filler and e in STOPWORDS and e not in PARTICLES and end not in STOPWORDS: sc -= 15  # dangling "from"/"them"/"some"
+        if forced: sc -= 60
         if len(toks) < 3: sc -= 10
         ef = self.info[e]["freq"] if e in self.info else 0
         if t not in ("none", "repeat"): sc -= 12 if ef < 3.0 else 6 if ef < 3.5 else 0  # forced, obscure rhyme words
@@ -570,11 +652,13 @@ def _rank_lines(self, line, lines, keep=8, sense=None):
             if coh is not None: sc += 6 if coh >= 0.3 else 3 if coh >= 0.18 else -6 if coh < 0.06 else 0  # does the rhyme word belong?
         sc += max(0, 6 - i // 4)  # the model lists its best ideas first
         sn = None
+        # A high self-score is not proof the line is good. A low one still counts against it.
         if sense is not None and t not in ("none", "repeat"):
-            sn = round(sense[i]); sc += max(-30, min(20, (sn - 6) * 5))
-            if sn <= 3: sc -= 15  # editor pass rated it nonsense / forced
+            sn = round(sense[i])
+            if sn <= 3: sc -= 24
+            elif sn <= 5: sc -= 10
         out.append({"text": text.strip(), "end": e, "tier": t, "syllables": a["syllables"], "syllable_diff": sd, "multi": multi,
-                    "internal": internal, "filler": filler, "cliche": cliche, "assoc": round(coh, 3) if coh is not None else None, "sense": sn,
+                    "internal": internal, "filler": filler, "cliche": cliche, "forced": forced, "assoc": round(coh, 3) if coh is not None else None, "sense": sn,
                     "score": max(0, min(100, round(sc))), "_i": i})
     # variety: penalise reused end words and near-duplicate lines (bag of content words)
     out.sort(key=lambda x: (-x["score"], x["_i"]))

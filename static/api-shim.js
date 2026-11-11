@@ -59,13 +59,14 @@ function rhymes(q){const raw=(q.get("word")||"").trim();if(!raw)return[400,{erro
   let syl,minl,maxl,minf;try{syl=q.get("syllables")?q.get("syllables").split(",").filter(x=>x.trim()).map(x=>{const n=parseInt(x,10);if(isNaN(n)||!/^\s*-?\d+\s*$/.test(x))throw 0;return n}):null;
     minl=num("min_len");maxl=num("max_len");minf=num("min_freq")}catch(e){return[400,{error:"invalid number"}]}
   const w=raw.toLowerCase();if(!WORD_RE.test(w))return[400,{error:"invalid word"}];
+  const mm=q.get("min_match");let minM=0;if(mm){if(!/^\d+$/.test(mm))return[400,{error:"invalid min_match"}];minM=parseInt(mm,10);if(minM<1||minM>8)return[400,{error:"invalid min_match"}]}
   const theme=q.get("theme")||null,themeOnly=["1","true"].includes(q.get("theme_only"));if(theme&&theme!=="related"&&!W.tsets[theme])return[400,{error:"unknown theme"}];
   const tset=theme?(theme==="related"?relatedSet(w):W.tsets[theme]):null;
   const t0=performance.now(),cd=candidates(w),limit=Math.min(parseInt(q.get("limit")||"300",10),5000);
   const res={word:w,known:!cd.guessed,confidence:W.info.has(w)?W.info.get(w).conf:"guess",guessed_from:cd.guessed?cd.src:null,pronunciations:cd.prons.map(p=>p.join(" ")),perfect:[],near:[],slant:[]};
   for(const tier of["perfect","near","slant"]){const items=[];for(const[c,m,sc]of cd[tier]){const inf=W.info.get(c);
       if(syl&&syl.length&&!syl.includes(inf.syl))continue;if(pos&&!inf.pos.some(p=>pos.includes(p)))continue;
-      if(minl&&inf.len<minl)continue;if(maxl&&inf.len>maxl)continue;if(minf!=null&&inf.freq<minf)continue;
+      if(minl&&inf.len<minl)continue;if(maxl&&inf.len>maxl)continue;if(minf!=null&&inf.freq<minf)continue;if(minM&&m<minM)continue;
       items.push({word:c,syllables:inf.syl,freq:inf.freq,pos:inf.pos,len:inf.len,matched_syllables:m,score:sc,conf:inf.conf,themed:!!tset&&tset.has(c)})}
     let its=tset&&themeOnly?items.filter(x=>x.themed):items;its.sort(SORTS[sort]);if(tset)its.sort((a,b)=>(!a.themed)-(!b.themed));
     res[tier+"_total"]=its.length;res[tier]=its.slice(0,limit)}
@@ -81,9 +82,29 @@ function wordInfo(raw){const w=raw.toLowerCase().replace(/^'+|'+$/g,"");const[pl
   let stress=ph.filter(p=>VOWELS.has(strip(p))).map(p=>/[12]$/.test(p)?"/":"u").join("");
   if(!ph.length)stress="u".repeat(Math.max(1,(w.match(/[aeiouy]+/g)||[]).length));
   return{word:raw,norm:w,syllables:stress.length,stress,known:!guessed,keys:[...new Set(pl.map(p=>keys(p).perfect))].sort(),fkeys:[...new Set(pl.map(p=>keys(p).family))].sort()}}
-function analyzeText(text){if(text==null)throw new RangeError("missing text");if(text.length>10000)throw new RangeError("text too long");
+const SECTION=/^\s*\[([^\[\]]{1,40})\]\s*$/,PLAN=/^[A-H]{2,8}$/;
+function planMarks(lines,plan){const notes=[],marks=new Map(),stanzas=[];let cur=[];
+  lines.forEach((l,i)=>{if(l.section)return;if(!l.words.length){if(cur.length)stanzas.push(cur);cur=[]}else cur.push(i)});
+  if(cur.length)stanzas.push(cur);
+  for(const st of stanzas){const slots=new Map();
+    st.forEach((i,n)=>{const slot=plan[n%plan.length];if(!slots.has(slot))slots.set(slot,[]);const group=slots.get(slot);group.push(i);
+      const earlier=group.filter(j=>j!==i);
+      if(earlier.length&&lines[i].letter===lines[earlier[0]].letter)marks.set(i,"hit");
+      else if(earlier.length){marks.set(i,"miss");notes.push('Line '+(i+1)+' "'+lines[i].end+'" should rhyme with line '+(earlier[0]+1)+' "'+lines[earlier[0]].end+'".')}
+      else marks.set(i,"anchor");
+      for(let m=0;m<n;m++){const j=st[m];if(plan[m%plan.length]===slot)continue;
+        if(lines[j].letter===lines[i].letter){marks.set(i,"miss");
+          const note='Line '+(i+1)+' "'+lines[i].end+'" rhymes with line '+(j+1)+' "'+lines[j].end+'", but '+plan+' wants a different sound.';
+          if(!notes.includes(note))notes.push(note);break}}});
+    for(const[slot,idxs]of slots)if(plan.split("").filter(c=>c===slot).length>=2&&idxs.length===1&&marks.get(idxs[0])==="anchor"){
+      marks.set(idxs[0],"need");notes.push('"'+lines[idxs[0]].end+'" still needs a rhyme.')}}
+  return[notes,marks]}
+function analyzeText(text,plan){if(text==null)throw new RangeError("missing text");if(text.length>10000)throw new RangeError("text too long");
+  if(plan===""||plan==="free"||plan==null)plan=null;if(plan!=null){plan=String(plan).toUpperCase();if(!PLAN.test(plan))throw new RangeError("invalid plan")}
   const lines=[],parts=[];let stanza=[],groups=[];const letter=i=>i<26?String.fromCharCode(65+i):"Z";
-  for(const raw of text.split("\n").slice(0,400)){const toks=raw.match(TOKEN)||[];
+  for(const raw of text.split("\n").slice(0,400)){const sec=SECTION.exec(raw);
+    if(sec){lines.push({text:raw,words:[],syllables:0,end:null,letter:null,match:null,section:sec[1].trim()});continue}
+    const toks=raw.match(TOKEN)||[];
     if(!toks.length){lines.push({text:raw,words:[],syllables:0,end:null,letter:null,match:null});if(stanza.length){parts.push(stanza.join(""));stanza=[];groups=[]}continue}
     const ws=toks.map(wordInfo),end=ws[ws.length-1],pk=new Set(end.keys),fk=new Set(end.fkeys);let let_=null,match=null;
     const inter=(a,b)=>[...a].some(x=>b.has(x));
@@ -94,8 +115,11 @@ function analyzeText(text){if(text==null)throw new RangeError("missing text");if
     stanza.push(let_);
     lines.push({text:raw,words:ws.map(({keys,fkeys,...x})=>x),syllables:ws.reduce((a,x)=>a+x.syllables,0),stress:ws.map(x=>x.stress).join(" "),end:end.norm,letter:let_,match})}
   if(stanza.length)parts.push(stanza.join(""));
-  return{lines,scheme:parts.join(" "),rhyme_density:rhymeDensity(text),total_lines:lines.filter(l=>l.words.length).length,total_syllables:lines.reduce((a,l)=>a+l.syllables,0)}}
-function analyze(q){if(!q.has("text"))return[400,{error:"missing 'text' parameter"}];try{return[200,analyzeText(q.get("text"))]}catch(e){if(e instanceof RangeError)return[400,{error:e.message}];throw e}}
+  const lyric=text.split("\n").map(raw=>SECTION.test(raw)?"":raw).join("\n");
+  const out={lines,scheme:parts.join(" "),rhyme_density:rhymeDensity(lyric.slice(0,10000)),total_lines:lines.filter(l=>l.words.length).length,total_syllables:lines.reduce((a,l)=>a+l.syllables,0)};
+  if(plan){const[notes,marks]=planMarks(lines,plan);out.plan=plan;out.plan_notes=notes;marks.forEach((mark,i)=>{lines[i].plan=mark})}
+  return out}
+function analyze(q){if(!q.has("text"))return[400,{error:"missing 'text' parameter"}];try{return[200,analyzeText(q.get("text"),q.get("plan"))]}catch(e){if(e instanceof RangeError)return[400,{error:e.message}];throw e}}
 function lineHelp(q){const prev=q.get("prev")||"";if(!prev.trim())return[400,{error:"missing 'prev' parameter"}];
   const theme=q.get("theme")||null,limit=Math.min(parseInt(q.get("limit")||"40",10),500);
   const a=analyzeText(prev.trim()+"\n"+(q.get("line")||"").trim()),p=a.lines[0],l=a.lines[1];
@@ -136,7 +160,8 @@ function coda(ph){const t=tail(ph).map(strip);return t.length>0&&VOWELS.has(t[0]
 const tailVowels=ph=>tail(ph).filter(isV).length;
 function svowelsPh(pl){const out=[];for(const p of pl){const v=tail(p).map(strip).filter(x=>VOWELS.has(x));if(v.length&&!out.includes(v[0]))out.push(v[0])}return out}
 // ---- related rhymes (port of Engine.related; association data lazy-loaded per vowel group) ----
-const pyRound=x=>{const f=Math.floor(x),d=x-f;return d>0.5?f+1:d<0.5?f:(f%2===0?f:f+1)};const DETS=new Set(["the","a","an","my","your","his","her","our","their","this","every","each"]);const TIER_Q={perfect:1,near:0.85,slant:0.7},ASSONANT_Q=0.5,SRC_W={ai:1,wikt:0.9,cn:0.5,combo:0.8};
+const pyRound=x=>{const f=Math.floor(x),d=x-f;return d>0.5?f+1:d<0.5?f:(f%2===0?f:f+1)};const DETS=new Set(["the","a","an","my","your","his","her","our","their","this","every","each"]);
+const WEAK_END=new Set("go show slow low woe so though tho".split(" ")),PREP=new Set("in on through from by at to of with for over under into across around upon within without along".split(" "));const TIER_Q={perfect:1,near:0.85,slant:0.7},ASSONANT_Q=0.5,SRC_W={ai:1,wikt:0.9,cn:0.5,combo:0.8};
 let AV=null,AVp=null;const AQ={},AG={},AP={};
 const stemClash=(w,c)=>(w.length>=4&&c.startsWith(w.slice(0,4)))||w.startsWith(c)||(c.length>=4&&w.startsWith(c.slice(0,4)));
 const abase=()=>new URL('data/assoc/',document.baseURI);
@@ -206,6 +231,8 @@ function verify(word,items){const w=String(word||"").trim().toLowerCase();if(!WO
     const lw=toks[toks.length-1],last=W.info.get(lw);
     if(!last||!last.pos.length||last.freq<2.8||lw.length<2||(toks.length===1&&LX().relStop.has(lw))||LX().filler.has(lw))continue;
     if(toks.some(x=>!W.info.has(x)||W.info.get(x).freq<2.5))continue;
+    if(toks.length>1&&toks.slice(0,-1).every(x=>LX().func.has(x)||PREP.has(x)||DETS.has(x)||LX().relStop.has(x))){
+      if(!last.pos.includes("n")||WEAK_END.has(lw)||last.freq<3.6)continue}
     if(toks.length>1){const k2=toks.slice(0,2).join(" ");pre.set(k2,(pre.get(k2)||0)+1);ends.set(lw,(ends.get(lw)||0)+1);if(pre.get(k2)>2||ends.get(lw)>2)continue}
     if(toks.length===1&&tierOf.has(toks[0]))t=tierOf.get(toks[0]);else{const ph=phrasePhones(toks,guessPron);t=ph&&qph.length?tailTier(qph,ph):null}
     if(t===null)continue;const ph=phrasePhones(toks,guessPron)||[],vm=qph.length?vowelMatch(qph,ph):0;
@@ -230,21 +257,24 @@ function rankLines(line,lines,keep=8,sense=null){if(typeof line!=="string"||!lin
   const sv=stressedVowels(end),stoks=line.match(TOKEN)||[],sph=linePhones(stoks),ep=prons(end)[0],tailV=ep.length?tailVowels(ep[0]):1;
   const qa=WORD_RE.test(end)?aquery(end):null,evs=qa?svowelsPh(ep):[];
   const out=lines.map((text,i)=>{const a=text.trim()?analyzeText(text.trim()).lines[0]:{words:[]};
-    if(!a.words.length)return{text,end:null,tier:"none",syllables:0,syllable_diff:src.syllables,multi:0,internal:0,filler:false,cliche:false,assoc:null,sense:null,score:0,_i:i};
+    if(!a.words.length)return{text,end:null,tier:"none",syllables:0,syllable_diff:src.syllables,multi:0,internal:0,filler:false,cliche:false,forced:false,assoc:null,sense:null,score:0,_i:i};
     const e=a.end;let t;if(e===end)t="repeat";else if(tiers.has(e))t=tiers.get(e);else if(wordInfo(e).keys.some(k=>ew.keys.includes(k)))t="perfect";
     else if([...stressedVowels(e)].some(v=>sv.has(v)))t="assonant";else t="none";
     const toks=text.match(TOKEN)||[],filler=LX().filler.has(e)&&!LX().filler.has(end);
     const vm=["perfect","near","slant","assonant"].includes(t)?vowelMatch(sph,linePhones(toks)):0;
     const parrot=toks.length>=2&&stoks.length>=2&&toks[toks.length-2].toLowerCase()===stoks[stoks.length-2].toLowerCase()&&t!=="repeat",multi=parrot?0:Math.max(0,vm-tailV);
-    const inl=internal([...toks.slice(0,-1),e]),sd=Math.abs(a.syllables-src.syllables),low=" "+toks.map(x=>x.toLowerCase()).join(" ")+" ";
+    const inl=internal([...toks.slice(0,-1),e]);
+    const prev=toks.length>=2?toks[toks.length-2].toLowerCase().replace(/^'+|'+$/g,""):"";
+    const forced=t!=="none"&&t!=="repeat"&&WEAK_END.has(e)&&!!prev&&W.info.has(prev)&&W.info.get(prev).pos.includes("adj");
+    const sd=Math.abs(a.syllables-src.syllables),low=" "+toks.map(x=>x.toLowerCase()).join(" ")+" ";
     const cliche=LX().cliches.some(c=>low.includes(" "+c+" "));
     let sc=TIER_BASE[t]*(filler?0.35:1);if(t!=="none"&&t!=="repeat"&&!filler)sc+=Math.min(20,10*multi);
-    sc+=Math.min(12,4*inl);sc+=sd===0?13:sd===1?10:sd===2?4:-8*(sd-2);if(cliche)sc-=15;if(parrot)sc-=10;if(toks.length>=2&&DETS.has(toks[toks.length-2].toLowerCase())&&W.info.has(e)&&W.info.get(e).pos.length&&!W.info.get(e).pos.includes("n"))sc-=20;if(!filler&&LX().stop.has(e)&&!LX().particles.has(e)&&!LX().stop.has(end))sc-=15;if(toks.length<3)sc-=10;
+    sc+=Math.min(12,4*inl);sc+=sd===0?13:sd===1?10:sd===2?4:-8*(sd-2);if(cliche)sc-=15;if(parrot)sc-=10;if(toks.length>=2&&DETS.has(toks[toks.length-2].toLowerCase())&&W.info.has(e)&&W.info.get(e).pos.length&&!W.info.get(e).pos.includes("n"))sc-=20;if(!filler&&LX().stop.has(e)&&!LX().particles.has(e)&&!LX().stop.has(end))sc-=15;if(forced)sc-=60;if(toks.length<3)sc-=10;
     const ef=W.info.has(e)?W.info.get(e).freq:0;if(t!=="none"&&t!=="repeat")sc-=ef<3?12:ef<3.5?6:0;
     let coh=null;if(qa&&["perfect","near","slant","assonant"].includes(t)){for(const v of evs){const hit=alookup(v,e);if(hit){coh=cos(qa[0],qa[1],hit[0],hit[1]);break}}
       if(coh!==null)sc+=coh>=0.3?6:coh>=0.18?3:coh<0.06?-6:0}
-    sc+=Math.max(0,6-Math.floor(i/4));let sn=null;if(sense!=null&&t!=="none"&&t!=="repeat"){sn=pyRound(sense[i]);sc+=Math.max(-30,Math.min(20,(sn-6)*5));if(sn<=3)sc-=15}
-    return{text:text.trim(),end:e,tier:t,syllables:a.syllables,syllable_diff:sd,multi,internal:inl,filler,cliche,assoc:coh===null?null:r3(coh),sense:sn,score:Math.max(0,Math.min(100,pyRound(sc))),_i:i}});
+    sc+=Math.max(0,6-Math.floor(i/4));let sn=null;if(sense!=null&&t!=="none"&&t!=="repeat"){sn=pyRound(sense[i]);if(sn<=3)sc-=24;else if(sn<=5)sc-=10}
+    return{text:text.trim(),end:e,tier:t,syllables:a.syllables,syllable_diff:sd,multi,internal:inl,filler,cliche,forced,assoc:coh===null?null:r3(coh),sense:sn,score:Math.max(0,Math.min(100,pyRound(sc))),_i:i}});
   out.sort((a,b)=>b.score-a.score||a._i-b._i);const ends=new Map(),bags=[];
   for(const x of out){if(x.end===null)continue;const bag=new Set((x.text.match(TOKEN)||[]).map(t=>t.toLowerCase()).filter(t=>!LX().stop.has(t)));let pen=0;
     if(ends.get(x.end))pen+=15*ends.get(x.end);
@@ -279,7 +309,7 @@ window.fetch=async(input,init)=>{const url=new URL(typeof input==="string"?input
       if(p==="/api/verify")r=b&&typeof b==="object"?guard(()=>verify(b.word,b.items)):[400,{error:"body must be an object"}];else
       if(p==="/api/rank_lines")r=b&&typeof b==="object"?(()=>{try{return[200,rankLines(b.line,b.lines,8,b.sense==null?null:b.sense)]}catch(e){if(e instanceof RangeError)return[400,{error:e.message}];throw e}})():[400,{error:"body must be an object"}];
       else if(p!=="/api/analyze")r=[404,{error:"not found"}];
-      else r=b&&typeof b.text==="string"?(()=>{try{return[200,analyzeText(b.text)]}catch(e){return[400,{error:e.message}]}})():[400,{error:"missing 'text'"}]}
+      else r=b&&typeof b.text==="string"?(()=>{try{return[200,analyzeText(b.text,typeof b.plan==="string"?b.plan:null)]}catch(e){if(e instanceof RangeError)return[400,{error:e.message}];return[400,{error:e.message}]}})():[400,{error:"missing 'text'"}]}
     else r=p==="/api/related"?related(url.searchParams):p==="/api/themes"?themesList():p==="/api/analyze"?analyze(url.searchParams):p==="/api/line"?lineHelp(url.searchParams):p==="/api/rhymes"?rhymes(url.searchParams):p==="/api/suggest"?suggest(url.searchParams):p==="/api/health"?[200,{ok:true,words:W.words.length}]:[404,{error:"not found"}]}
   catch(e){r=[500,{error:"internal error"}]}
   return new Response(JSON.stringify(r[1]),{status:r[0],headers:{"Content-Type":"application/json"}})};

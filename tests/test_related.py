@@ -127,7 +127,27 @@ def test_rank_sense_nonsense_penalty(engine):
     lines = ["my fingers tapping out a nervous gum", "till the feeling in my chest goes numb"]
     r = {x["text"]: x for x in engine.rank_lines("my heart is beating like a drum", lines, sense=[2, 8])["lines"]}
     r6 = {x["text"]: x for x in engine.rank_lines("my heart is beating like a drum", lines, sense=[6, 8])["lines"]}
-    assert r[lines[0]]["sense"] == 2 and r6[lines[0]]["score"] - r[lines[0]]["score"] >= 35 and r[lines[1]]["score"] > r[lines[0]]["score"]
+    assert r[lines[0]]["sense"] == 2 and r6[lines[0]]["score"] - r[lines[0]]["score"] == 24 and r[lines[1]]["score"] > r[lines[0]]["score"]
+    praised = engine.rank_lines("my heart is beating like a drum", [lines[1]], sense=[10])["lines"][0]["score"]
+    neutral = engine.rank_lines("my heart is beating like a drum", [lines[1]], sense=[6])["lines"][0]["score"]
+    assert praised == neutral  # a self-reported 10 is not extra credit
+
+def test_verify_rejects_forced_snow_phrases(engine):
+    keep = {x["text"] for x in engine.verify("snow", ["soo", "in the slow", "through the woe", "let it go", "glow", "in the glow", "white glow"])["items"]}
+    assert "soo" not in keep and "in the slow" not in keep and "through the woe" not in keep
+    assert {"let it go", "glow", "in the glow", "white glow"} <= keep
+
+def test_rank_forced_snow_lines_lose(engine):
+    good = "The world is hushed and white below"
+    bad = ["moments lost in the silent slow", "midnight hours tick by in a steady go", "a lonely figure in the distant show"]
+    r = {x["text"]: x for x in engine.rank_lines("walking through the falling snow", [good, *bad], sense=[6, 10, 10, 10])["lines"]}
+    assert r[good]["keep"] and not r[good]["forced"] and r[good]["score"] >= 60
+    for b in bad:
+        assert r[b]["forced"] and r[b]["score"] < 40 and not r[b]["keep"], (b, r[b]["score"])
+    crawl = engine.rank_lines("walking through the falling snow", ["the stars are calling, crawling slow", "Our footprints fading as we go"])["lines"]
+    by = {x["text"]: x for x in crawl}
+    assert not by["the stars are calling, crawling slow"]["forced"] and by["the stars are calling, crawling slow"]["keep"]
+    assert not by["Our footprints fading as we go"]["forced"] and by["Our footprints fading as we go"]["keep"]
 
 def test_verify_rejects_junk(engine):
     keep = {x["text"] for x in engine.verify("night", ["nyte", "nite", "plight", "upright", "might", "gonna be the delight", "gonna be the right",

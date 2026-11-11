@@ -15,11 +15,26 @@ self.addEventListener("fetch", e => {
   const req = e.request; if (req.method !== "GET") return;
   const url = new URL(req.url);
   if (url.origin === location.origin) {
-    // navigations: serve cached shell (ignoring ?w= query) so the app opens offline
+    // Cache first so the shell opens offline. If that entry is missing and the network fails,
+    // fall back to any cached copy instead of rejecting the fetch (which blanks the app).
+    const scopePath = new URL(self.registration.scope).pathname;
     const key = req.mode === "navigate" ? new URL("./", self.registration.scope).href : req;
-    e.respondWith(caches.open(CACHE).then(c => c.match(key, {ignoreSearch: req.mode === "navigate"}).then(hit => hit || fetch(req).then(r => {
-      if (r.ok && url.pathname.startsWith(new URL(self.registration.scope).pathname)) c.put(req, r.clone()); return r;
-    }))));
+    e.respondWith((async () => {
+      const c = await caches.open(CACHE);
+      const hit = await c.match(key, {ignoreSearch: req.mode === "navigate"});
+      if (hit && req.cache !== "reload") return hit;
+      try {
+        const r = await fetch(req);
+        if (r.ok && url.pathname.startsWith(scopePath)) {
+          c.put(req.mode === "navigate" ? new Request("./") : req, r.clone()).catch(() => {});
+        }
+        if (r.ok || !hit) return r;
+        return hit;
+      } catch (err) {
+        if (hit) return hit;
+        return new Response("offline", {status: 503, headers: {"Content-Type": "text/plain; charset=utf-8"}});
+      }
+    })());
   } else if (/fonts\.(googleapis|gstatic)\.com$/.test(url.hostname)) {
     e.respondWith(caches.open(FONTS).then(c => c.match(req).then(hit => {
       const net = fetch(req).then(r => { if (r.ok || r.type === "opaque") c.put(req, r.clone()); return r; }).catch(() => hit);

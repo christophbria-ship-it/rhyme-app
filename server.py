@@ -36,7 +36,9 @@ class H(BaseHTTPRequestHandler):
             if path == "/api/rank_lines": return self.send(200, ENGINE.rank_lines(body.get("line"), body.get("lines"), sense=body.get("sense")))
             if path == "/api/verify": return self.send(200, ENGINE.verify(body.get("word") or "", body.get("items")))
             if not isinstance(body.get("text"), str): return self.send(400, {"error": "missing 'text'"})
-            return self.send(200, ENGINE.analyze(body["text"]))
+            plan = body.get("plan")
+            if plan is not None and not isinstance(plan, str): return self.send(400, {"error": "invalid plan"})
+            return self.send(200, ENGINE.analyze(body["text"], plan=plan))
         except ValueError as e:
             self.send(400, {"error": str(e)})
         except Exception:
@@ -68,12 +70,14 @@ class H(BaseHTTPRequestHandler):
                 pos = q.get("pos", "").split(",") if q.get("pos") else None
                 if pos and not set(pos) <= POS: return self.send(400, {"error": "invalid pos"})
                 t = time.perf_counter()
+                mm = int(q["min_match"]) if q.get("min_match") else None
                 r = ENGINE.rhymes(q["word"], syllables=ints(q.get("syllables")), pos=pos,
                                   min_len=int(q["min_len"]) if q.get("min_len") else None,
                                   max_len=int(q["max_len"]) if q.get("max_len") else None,
                                   min_freq=float(q["min_freq"]) if q.get("min_freq") else None,
                                   sort=sort, limit=min(int(q.get("limit", 300)), 5000),
-                                  theme=q.get("theme") or None, theme_only=q.get("theme_only") in ("1", "true"))
+                                  theme=q.get("theme") or None, theme_only=q.get("theme_only") in ("1", "true"),
+                                  min_match=mm)
                 r["elapsed_ms"] = round((time.perf_counter() - t) * 1000, 2)
                 return self.send(200, r)
             if u.path == "/api/themes":
@@ -85,7 +89,7 @@ class H(BaseHTTPRequestHandler):
                                                      phrases=min(int(q.get("phrases", 80)), 300)))
             if u.path == "/api/analyze":
                 if "text" not in q: return self.send(400, {"error": "missing 'text' parameter"})
-                return self.send(200, ENGINE.analyze(q["text"]))
+                return self.send(200, ENGINE.analyze(q["text"], plan=q.get("plan") or None))
             if u.path == "/api/line":
                 if not q.get("prev", "").strip(): return self.send(400, {"error": "missing 'prev' parameter"})
                 return self.send(200, ENGINE.line_help(q["prev"], q.get("line", ""), theme=q.get("theme") or None,
