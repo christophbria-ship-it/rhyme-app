@@ -227,7 +227,9 @@ PLAN_RE = re.compile(r"^[A-H]{2,8}$")
 def _without_sections(text):
     return "\n".join("" if SECTION_RE.match(raw) else raw for raw in (text or "").split("\n"))
 
-# Endings the model uses only to land a rhyme. Kept in sync with worker/src/filter.js.
+# Endings the model uses only to land a rhyme. Kept in sync with static/api-shim.js and worker/src/filter.js.
+# Zipf below this, after an adjective, is a rare landing (tow 3.72, woe 3.31, bestow 2.98). glow is 3.91.
+RARE_END = 3.8
 BAD_END_RE = [
     re.compile(r"\b(?:through|in|on|over|under|about|as)\s+the\s+(?:woe|tow|slow|show|grow|flow)\b"),
     re.compile(r"\ball\s+about\s+the\s+[a-z]+\b"),
@@ -236,10 +238,43 @@ BAD_END_RE = [
     re.compile(r"\b(?:forest|street|streets|footstep|footsteps)\s+(?:flow|tow|woe|grow)\b"),
     re.compile(r"\bthe\s+(?:tow|woe)\b"),
 ]
+_TOK_RE = re.compile(r"[a-z]+(?:'[a-z]+)?")
 
-def bad_ending(text):
-    s = " ".join(re.findall(r"[a-z]+(?:'[a-z]+)?", (text or "").lower()))
-    return any(r.search(s) for r in BAD_END_RE)
+def _ending_slot(toks, is_adj):
+    """det: "a tow". det-adj: "the frozen tow". adj: "frozen tow" / "white below"."""
+    if len(toks) < 2: return None
+    if toks[-2] in DETS: return "det"
+    if not is_adj(toks[-2]): return None
+    i = len(toks) - 2
+    while i >= 0 and is_adj(toks[i]) and toks[i] not in DETS: i -= 1
+    if i >= 0 and toks[i] in DETS: return "det-adj"
+    return "adj"
+
+def bad_ending(text, info=None, allow=()):
+    """True when a line exists only to land a rhyme.
+
+    A determiner opens a noun slot ("the slow", "a bestow"). An adjective in that slot
+    also rejects a rare noun ("the frozen tow") and an easy landing ("the distant show").
+    A common adverb still fits ("in the cold below", "white below"). `allow` is the set of
+    words already in the source line: a rare noun the writer used is not a forced landing.
+    Wrong part of speech in the noun slot is rejected even then.
+    """
+    toks = _TOK_RE.findall((text or "").lower())
+    s = " ".join(toks)
+    if any(r.search(s) for r in BAD_END_RE): return True
+    slot = _ending_slot(toks, lambda w: "adj" in (info or {}).get(w, {}).get("pos", []))
+    if not slot: return False
+    end = toks[-1]
+    if end in WEAK_END and slot in ("adj", "det-adj"): return True
+    inf = (info or {}).get(end)
+    if not inf or not inf.get("pos"): return False
+    noun = "n" in inf["pos"]
+    rare = inf["freq"] < RARE_END
+    # A verb or adverb in the noun slot is wrong even when the source line used the word.
+    if not noun and (slot == "det" or (rare and slot in ("adj", "det-adj"))): return True
+    # A rare noun after an adjective is only there for the rhyme, unless the source already said it.
+    if noun and rare and slot in ("adj", "det-adj") and end not in allow: return True
+    return False
 
 def suno_export(text):
     """Lossless Suno copy: section tags and line breaks are the lyric text, unchanged."""
@@ -538,7 +573,7 @@ def _verify(self, word, items):
     for raw in items:
         text = re.sub(r"\s+", " ", re.sub(r"[^a-z' \-]", " ", raw.lower())).strip()
         toks = text.replace("-", " ").split()
-        if not toks or text in seen or toks[-1] == w or bad_ending(text): continue
+        if not toks or text in seen or toks[-1] == w or bad_ending(text, self.info, {w}): continue
         seen.add(text)
         # only real, common words: AI brainstorms invent spellings ("nyte", "vart") and dredge up names ("moe")
         last = self.info.get(toks[-1])
@@ -621,6 +656,7 @@ def _rank_lines(self, line, lines, keep=8, sense=None):
     qa = self.assoc.query(end) if self.assoc.available() and WORD_RE.match(end) else None
     evs = _svowels_ph(self.pronunciations(end)[0]) if qa else []
     tail_v = sum(1 for p in rhyme_tail(self.pronunciations(end)[0][0]) if strip(p) in VOWELS) if self.pronunciations(end)[0] else 1
+    allow = set(_TOK_RE.findall(line.lower()))
     out = []
     for i, text in enumerate(lines):
         a = self.analyze(text.strip())["lines"][0] if text.strip() else {"words": []}
@@ -671,7 +707,7 @@ def _rank_lines(self, line, lines, keep=8, sense=None):
             sn = round(sense[i])
             if sn <= 3: sc -= 24
             elif sn <= 5: sc -= 10
-        if bad_ending(text):
+        if bad_ending(text, self.info, allow):
             forced = True
             sc = 0
         out.append({"text": text.strip(), "end": e, "tier": t, "syllables": a["syllables"], "syllable_diff": sd, "multi": multi,

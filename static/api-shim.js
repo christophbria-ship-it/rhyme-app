@@ -163,7 +163,18 @@ function svowelsPh(pl){const out=[];for(const p of pl){const v=tail(p).map(strip
 const pyRound=x=>{const f=Math.floor(x),d=x-f;return d>0.5?f+1:d<0.5?f:(f%2===0?f:f+1)};const DETS=new Set(["the","a","an","my","your","his","her","our","their","this","every","each"]);
 const WEAK_END=new Set("go show slow low woe so though tho".split(" ")),PREP=new Set("in on through from by at to of with for over under into across around upon within without along".split(" "));
 const BAD_END=[/\b(?:through|in|on|over|under|about|as)\s+the\s+(?:woe|tow|slow|show|grow|flow)\b/,/\ball\s+about\s+the\s+[a-z]+\b/,/\blet\s+it\s+(?!go\b)[a-z]+\b/,/\bto\s+bestow\b/,/\b(?:forest|street|streets|footstep|footsteps)\s+(?:flow|tow|woe|grow)\b/,/\bthe\s+(?:tow|woe)\b/];
-function badEnding(text){const s=(String(text||"").toLowerCase().match(/[a-z]+(?:'[a-z]+)?/g)||[]).join(" ");return BAD_END.some(r=>r.test(s))}const TIER_Q={perfect:1,near:0.85,slant:0.7},ASSONANT_Q=0.5,SRC_W={ai:1,wikt:0.9,cn:0.5,combo:0.8};
+// Same rule as engine.bad_ending. Zipf < 3.8 after an adjective is a rare landing; glow (3.91) stays.
+const RARE_END=3.8;
+function isAdjWord(w){const inf=W.info.get(w);return !!(inf&&inf.pos.includes("adj"))}
+function endingSlot(toks){if(toks.length<2)return null;if(DETS.has(toks[toks.length-2]))return"det";if(!isAdjWord(toks[toks.length-2]))return null;
+  let i=toks.length-2;while(i>=0&&isAdjWord(toks[i])&&!DETS.has(toks[i]))i--;if(i>=0&&DETS.has(toks[i]))return"det-adj";return"adj"}
+function badEnding(text,allow){const toks=(String(text||"").toLowerCase().match(/[a-z]+(?:'[a-z]+)?/g)||[]);if(BAD_END.some(r=>r.test(toks.join(" "))))return true;
+  const slot=endingSlot(toks);if(!slot)return false;const end=toks[toks.length-1];
+  if(WEAK_END.has(end)&&(slot==="adj"||slot==="det-adj"))return true;
+  const inf=W.info.get(end);if(!inf||!inf.pos.length)return false;const noun=inf.pos.includes("n"),rare=inf.freq<RARE_END;
+  if(!noun&&(slot==="det"||(rare&&(slot==="adj"||slot==="det-adj"))))return true;
+  if(noun&&rare&&(slot==="adj"||slot==="det-adj")&&!(allow&&allow.has(end)))return true;return false}
+const TIER_Q={perfect:1,near:0.85,slant:0.7},ASSONANT_Q=0.5,SRC_W={ai:1,wikt:0.9,cn:0.5,combo:0.8};
 let AV=null,AVp=null;const AQ={},AG={},AP={};
 const stemClash=(w,c)=>(w.length>=4&&c.startsWith(w.slice(0,4)))||w.startsWith(c)||(c.length>=4&&w.startsWith(c.slice(0,4)));
 const abase=()=>new URL('data/assoc/',document.baseURI);
@@ -229,7 +240,7 @@ function verify(word,items){const w=String(word||"").trim().toLowerCase();if(!WO
   const cd=candidates(w),qph=cd.prons.length?cd.prons[0]:[],tierOf=new Map();for(const t of["slant","near","perfect"])for(const[c]of cd[t])tierOf.set(c,t);
   const qtail=qph.length?tailVowels(qph):1,out=[],seen=new Set(),pre=new Map(),ends=new Map();
   for(const raw of items){const text=raw.toLowerCase().replace(/[^a-z' \-]/g," ").replace(/\s+/g," ").trim();const toks=text.replace(/-/g," ").split(" ").filter(Boolean);
-    if(!toks.length||seen.has(text)||toks[toks.length-1]===w||badEnding(text))continue;seen.add(text);let t;
+    if(!toks.length||seen.has(text)||toks[toks.length-1]===w||badEnding(text,new Set([w])))continue;seen.add(text);let t;
     const lw=toks[toks.length-1],last=W.info.get(lw);
     if(!last||!last.pos.length||last.freq<2.8||lw.length<2||(toks.length===1&&LX().relStop.has(lw))||LX().filler.has(lw))continue;
     if(toks.some(x=>!W.info.has(x)||W.info.get(x).freq<2.5))continue;
@@ -257,7 +268,7 @@ function rankLines(line,lines,keep=8,sense=null){if(typeof line!=="string"||!lin
   const end=src.end,ew=wordInfo(end),tiers=new Map();
   if(WORD_RE.test(end)){const cd=candidates(end);for(const t of["slant","near","perfect"])for(const[c]of cd[t])tiers.set(c,t)}
   const sv=stressedVowels(end),stoks=line.match(TOKEN)||[],sph=linePhones(stoks),ep=prons(end)[0],tailV=ep.length?tailVowels(ep[0]):1;
-  const qa=WORD_RE.test(end)?aquery(end):null,evs=qa?svowelsPh(ep):[];
+  const qa=WORD_RE.test(end)?aquery(end):null,evs=qa?svowelsPh(ep):[],allow=new Set((line.toLowerCase().match(/[a-z]+(?:'[a-z]+)?/g)||[]));
   const out=lines.map((text,i)=>{const a=text.trim()?analyzeText(text.trim()).lines[0]:{words:[]};
     if(!a.words.length)return{text,end:null,tier:"none",syllables:0,syllable_diff:src.syllables,multi:0,internal:0,filler:false,cliche:false,forced:false,assoc:null,sense:null,score:0,_i:i};
     const e=a.end;let t;if(e===end)t="repeat";else if(tiers.has(e))t=tiers.get(e);else if(wordInfo(e).keys.some(k=>ew.keys.includes(k)))t="perfect";
@@ -276,7 +287,7 @@ function rankLines(line,lines,keep=8,sense=null){if(typeof line!=="string"||!lin
     let coh=null;if(qa&&["perfect","near","slant","assonant"].includes(t)){for(const v of evs){const hit=alookup(v,e);if(hit){coh=cos(qa[0],qa[1],hit[0],hit[1]);break}}
       if(coh!==null)sc+=coh>=0.3?6:coh>=0.18?3:coh<0.06?-6:0}
     sc+=Math.max(0,6-Math.floor(i/4));let sn=null;if(sense!=null&&t!=="none"&&t!=="repeat"){sn=pyRound(sense[i]);if(sn<=3)sc-=24;else if(sn<=5)sc-=10}
-    if(badEnding(text)){forced=true;sc=0}
+    if(badEnding(text,allow)){forced=true;sc=0}
     return{text:text.trim(),end:e,tier:t,syllables:a.syllables,syllable_diff:sd,multi,internal:inl,filler,cliche,forced,assoc:coh===null?null:r3(coh),sense:sn,score:Math.max(0,Math.min(100,pyRound(sc))),_i:i}});
   out.sort((a,b)=>b.score-a.score||a._i-b._i);const ends=new Map(),bags=[];
   for(const x of out){if(x.end===null)continue;const bag=new Set((x.text.match(TOKEN)||[]).map(t=>t.toLowerCase()).filter(t=>!LX().stop.has(t)));let pen=0;

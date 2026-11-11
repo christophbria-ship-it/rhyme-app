@@ -94,6 +94,7 @@ export function buildMessages(b) {
       `Never end on filler (though, so, too, oh, yeah, it, now, then), never end on "${end}" itself, and don't reuse an end word. ` +
       `Never force a rhyme: every line must make sense and sound like something a real artist would sing. ` +
       `Do not glue an adjective onto go, show, slow, or woe. Failures, not models: "moments lost in the silent slow", "midnight hours tick by in a steady go", "a lonely figure in the distant show". ` +
+      `Do not end on a rare word, or the wrong part of speech, just to land the rhyme. After "the" or "a" and an adjective, the last word has to be a common noun: "the frozen tow" and "a soft bestow" are failures. ` +
       `Work backwards: choose a strong rhyme word or phrase first, then build the whole line so it lands there naturally and grammatically ` +
       `(a noun after "the/a/my", a verb where a verb belongs; e.g. for "drum": "till the feeling in my chest goes numb" — never nonsense like "snapping to the succumb").\n` +
       `2. RHYTHM: ${syl}, natural stress, easy to sing.\n` +
@@ -236,7 +237,20 @@ export default {
       if (kind === "lines") {
         const n = b.count || 6;
         const text = await runModel(env, model, buildMessages(b), Math.min(1600, 120 + n * 34), 0.85 + 0.01 * ((b.seed || 0) % 10));
-        const lines = filterLines(parseLines(text, b.line, b.exclude || []));
+        const parsed = parseLines(text, b.line, b.exclude || []);
+        let lines = filterLines(parsed, b.line);
+        // One rewrite when the filter leaves fewer than 3 lines. A hang or a second miss still returns what survived.
+        if (lines.length < 3) {
+          const exclude = [...(b.exclude || []), ...parsed].slice(0, LIMITS.exclude);
+          const n2 = Math.max(n, 6);
+          const text2 = await runModel(env, model, buildMessages({ ...b, exclude, count: n2 }), Math.min(1600, 120 + n2 * 34), 0.85 + 0.01 * ((b.seed || 0) % 10));
+          const seen = new Set(lines.map(s => s.toLowerCase()));
+          for (const line of filterLines(parseLines(text2, b.line, exclude), b.line)) {
+            const k = line.toLowerCase();
+            if (seen.has(k)) continue;
+            seen.add(k); lines.push(line);
+          }
+        }
         if (!lines.length) return json(502, { error: "model returned no usable lines" }, h);
         body = { lines, model };
         // Judge only the lines that survived the dictionary and forced-rhyme filter, so the second call stays small.
@@ -247,7 +261,7 @@ export default {
       } else {
         // ~40 short items instead of ~100. The previous 1400-token brainstorm was about 18s cold.
         const text = await runModel(env, model, buildBrainstorm(b), 420, 0.6);
-        const r = filterBrainstorm(parseBrainstorm(text, b.word));
+        const r = filterBrainstorm(parseBrainstorm(text, b.word), b.word);
         if (!Object.values(r).some(a => a.length)) return json(502, { error: "model returned no usable rhymes" }, h);
         body = { ...r, model };
       }

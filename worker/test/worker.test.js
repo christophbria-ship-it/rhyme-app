@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import worker, { parseLines, parseBrainstorm, validate, validateBrainstorm, buildMessages, buildBrainstorm, lastWord, modelText, parseJudge, _resetRate, corsHeaders } from "../src/index.js";
 import { keepText, filterLines, filterBrainstorm } from "../src/filter.js";
+import { LEX } from "../src/lex.js";
 const ORIGIN = "https://christophbria-ship-it.github.io";
 const env = (resp, opts = {}) => { const e = { ...opts, calls: 0 }; e.inputs = []; e.AI = { run: async (model, input) => { e.calls++; e.inputs.push({ model, input }); e.last = e.inputs[0];
   if (/strict, experienced lyric editor/.test(input.messages[0].content)) { const n = (input.messages[1].content.match(/^\d+\. /gm) || []).length; return { response: JSON.stringify(Array.from({ length: n }, (_, i) => 9 - i)) }; } if (resp instanceof Error) throw resp; return typeof resp === "object" ? resp : { response: resp }; } }; return e; };
@@ -75,12 +76,13 @@ test("forced rhymes and invented spellings are removed before the response", asy
   _resetRate();
   const junkLines = ["every step I take is through the woe", "the city streets are empty as the tow",
     "frosty mornings turn to let it grow", "memories of you begin to bestow", "my footsteps quiet on the forest flow",
-    "The world is hushed and white below"];
+    "footsteps quiet on the frozen tow", "night air whispering a soft bestow",
+    "The world is hushed and white below", "Our footprints fading as we go", "I feel the winter wind blow"];
   const e = env(JSON.stringify(junkLines));
   const r = await worker.fetch(req({ line: "walking through the falling snow", count: 6, judge: false }), e);
   assert.equal(r.status, 200);
   const d = await r.json();
-  assert.deepEqual(d.lines, ["The world is hushed and white below"]);
+  assert.deepEqual(d.lines, ["The world is hushed and white below", "Our footprints fading as we go", "I feel the winter wind blow"]);
   assert.equal(e.calls, 1);
   const bs = await worker.fetch(get("/brainstorm", { word: "snow" }, { ip: "4.4.4.4" }), env(JSON.stringify({
     perfect: ["glow", "soo"], multi: ["let it go", "let it grow"], slant: ["forso", "beho", "kno", "cold"],
@@ -96,8 +98,43 @@ test("forced rhymes and invented spellings are removed before the response", asy
   for (const bad of ["soo", "forso", "beho", "kno", "all about the woe", "let it grow", "the tow", "forest flow"]) assert.equal(flat.includes(bad), false, bad);
   assert.equal(keepText("let it go"), true);
   assert.equal(keepText("soo"), false);
+  assert.equal(keepText("footsteps quiet on the frozen tow", "walking through the falling snow"), false);
+  assert.equal(keepText("night air whispering a soft bestow"), false);
+  assert.equal(keepText("The world is hushed and white below"), true);
+  assert.equal(keepText("stalling in the cold below"), true);
+  assert.equal(keepText("call someone for a tow"), true);
+  assert.equal(keepText("still stuck on the frozen tow", "wheels locked in the frozen tow"), true);
+  assert.equal(keepText("a soft bestow", "a soft bestow"), false);
+  assert.equal(LEX.get("tow"), undefined);
+  assert.equal(LEX.get("bestow") & 3, 2);
+  assert.equal(LEX.get("glow") & 3, 1);
+  assert.equal(LEX.get("below") & 3, 0);
+  assert.equal(LEX.get("frozen") & 4, 4);
   assert.deepEqual(filterLines(["through the woe", "as we go"]), ["as we go"]);
   assert.deepEqual(filterBrainstorm({ perfect: ["soo", "glow"], multi: [], slant: [], phrases: [] }).perfect, ["glow"]);
+});
+test("fewer than three keepers is rewritten once", async () => {
+  _resetRate();
+  const first = JSON.stringify(["footsteps quiet on the frozen tow", "night air whispering a soft bestow", "The world is hushed and white below"]);
+  const second = JSON.stringify(["Our footprints fading as we go", "I feel the winter wind blow", "Your hand in mine, the embers glow"]);
+  let n = 0;
+  const e = { calls: 0, AI: { run: async (_model, input) => {
+    e.calls++;
+    if (/strict, experienced lyric editor/.test(input.messages[0].content)) {
+      const k = (input.messages[1].content.match(/^\d+\. /gm) || []).length;
+      return { response: JSON.stringify(Array.from({ length: k }, () => 8)) };
+    }
+    n++; e.rewrite = input;
+    return { response: n === 1 ? first : second };
+  } } };
+  const r = await worker.fetch(req({ line: "walking through the falling snow", count: 6, judge: false }), e);
+  assert.equal(r.status, 200);
+  const d = await r.json();
+  assert.equal(e.calls, 2);
+  assert.equal(d.lines.length >= 3, true);
+  assert.deepEqual(d.lines, ["The world is hushed and white below", "Our footprints fading as we go", "I feel the winter wind blow", "Your hand in mine, the embers glow"]);
+  assert.match(e.rewrite.messages[1].content, /frozen tow/);
+  assert.match(e.rewrite.messages[1].content, /soft bestow/);
 });
 test("brainstorm prompt asks for a short list so a cold call stays small", () => {
   const u = buildBrainstorm({ word: "snow" })[1].content;
