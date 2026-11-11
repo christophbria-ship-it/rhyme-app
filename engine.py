@@ -227,6 +227,20 @@ PLAN_RE = re.compile(r"^[A-H]{2,8}$")
 def _without_sections(text):
     return "\n".join("" if SECTION_RE.match(raw) else raw for raw in (text or "").split("\n"))
 
+# Endings the model uses only to land a rhyme. Kept in sync with worker/src/filter.js.
+BAD_END_RE = [
+    re.compile(r"\b(?:through|in|on|over|under|about|as)\s+the\s+(?:woe|tow|slow|show|grow|flow)\b"),
+    re.compile(r"\ball\s+about\s+the\s+[a-z]+\b"),
+    re.compile(r"\blet\s+it\s+(?!go\b)[a-z]+\b"),
+    re.compile(r"\bto\s+bestow\b"),
+    re.compile(r"\b(?:forest|street|streets|footstep|footsteps)\s+(?:flow|tow|woe|grow)\b"),
+    re.compile(r"\bthe\s+(?:tow|woe)\b"),
+]
+
+def bad_ending(text):
+    s = " ".join(re.findall(r"[a-z]+(?:'[a-z]+)?", (text or "").lower()))
+    return any(r.search(s) for r in BAD_END_RE)
+
 def suno_export(text):
     """Lossless Suno copy: section tags and line breaks are the lyric text, unchanged."""
     if not isinstance(text, str): raise ValueError("missing text")
@@ -524,7 +538,7 @@ def _verify(self, word, items):
     for raw in items:
         text = re.sub(r"\s+", " ", re.sub(r"[^a-z' \-]", " ", raw.lower())).strip()
         toks = text.replace("-", " ").split()
-        if not toks or text in seen or toks[-1] == w: continue
+        if not toks or text in seen or toks[-1] == w or bad_ending(text): continue
         seen.add(text)
         # only real, common words: AI brainstorms invent spellings ("nyte", "vart") and dredge up names ("moe")
         last = self.info.get(toks[-1])
@@ -657,6 +671,9 @@ def _rank_lines(self, line, lines, keep=8, sense=None):
             sn = round(sense[i])
             if sn <= 3: sc -= 24
             elif sn <= 5: sc -= 10
+        if bad_ending(text):
+            forced = True
+            sc = 0
         out.append({"text": text.strip(), "end": e, "tier": t, "syllables": a["syllables"], "syllable_diff": sd, "multi": multi,
                     "internal": internal, "filler": filler, "cliche": cliche, "forced": forced, "assoc": round(coh, 3) if coh is not None else None, "sense": sn,
                     "score": max(0, min(100, round(sc))), "_i": i})

@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import worker, { parseLines, parseBrainstorm, validate, validateBrainstorm, buildMessages, buildBrainstorm, lastWord, modelText, parseJudge, _resetRate, corsHeaders } from "../src/index.js";
+import { keepText, filterLines, filterBrainstorm } from "../src/filter.js";
 const ORIGIN = "https://christophbria-ship-it.github.io";
 const env = (resp, opts = {}) => { const e = { ...opts, calls: 0 }; e.inputs = []; e.AI = { run: async (model, input) => { e.calls++; e.inputs.push({ model, input }); e.last = e.inputs[0];
   if (/strict, experienced lyric editor/.test(input.messages[0].content)) { const n = (input.messages[1].content.match(/^\d+\. /gm) || []).length; return { response: JSON.stringify(Array.from({ length: n }, (_, i) => 9 - i)) }; } if (resp instanceof Error) throw resp; return typeof resp === "object" ? resp : { response: resp }; } }; return e; };
@@ -70,6 +71,40 @@ test("rate limiting per IP", async () => {
   assert.deepEqual(codes.slice(0, 20), Array(20).fill(200)); assert.equal(codes[20], 429);
   assert.equal((await worker.fetch(req({ line: "falling snow" }, { ip: "8.8.8.8" }), env(LINES))).status, 200);
 });
+test("forced rhymes and invented spellings are removed before the response", async () => {
+  _resetRate();
+  const junkLines = ["every step I take is through the woe", "the city streets are empty as the tow",
+    "frosty mornings turn to let it grow", "memories of you begin to bestow", "my footsteps quiet on the forest flow",
+    "The world is hushed and white below"];
+  const e = env(JSON.stringify(junkLines));
+  const r = await worker.fetch(req({ line: "walking through the falling snow", count: 6, judge: false }), e);
+  assert.equal(r.status, 200);
+  const d = await r.json();
+  assert.deepEqual(d.lines, ["The world is hushed and white below"]);
+  assert.equal(e.calls, 1);
+  const bs = await worker.fetch(get("/brainstorm", { word: "snow" }, { ip: "4.4.4.4" }), env(JSON.stringify({
+    perfect: ["glow", "soo"], multi: ["let it go", "let it grow"], slant: ["forso", "beho", "kno", "cold"],
+    phrases: ["all about the woe", "white glow", "the tow", "forest flow"],
+  })));
+  assert.equal(bs.status, 200);
+  const b = await bs.json();
+  const flat = [...b.perfect, ...b.multi, ...b.slant, ...b.phrases];
+  assert.deepEqual(b.perfect, ["glow"]);
+  assert.deepEqual(b.multi, ["let it go"]);
+  assert.deepEqual(b.slant, ["cold"]);
+  assert.deepEqual(b.phrases, ["white glow"]);
+  for (const bad of ["soo", "forso", "beho", "kno", "all about the woe", "let it grow", "the tow", "forest flow"]) assert.equal(flat.includes(bad), false, bad);
+  assert.equal(keepText("let it go"), true);
+  assert.equal(keepText("soo"), false);
+  assert.deepEqual(filterLines(["through the woe", "as we go"]), ["as we go"]);
+  assert.deepEqual(filterBrainstorm({ perfect: ["soo", "glow"], multi: [], slant: [], phrases: [] }).perfect, ["glow"]);
+});
+test("brainstorm prompt asks for a short list so a cold call stays small", () => {
+  const u = buildBrainstorm({ word: "snow" })[1].content;
+  assert.match(u, /"perfect": 12/);
+  assert.match(u, /"phrases": 10/);
+  assert.doesNotMatch(u, /"perfect": 30/);
+});
 test("a stalled editor pass still returns the written lines", async () => {
   _resetRate();
   const e = { calls: 0, JUDGE_MS: 40, AI: { run: async (_model, input) => {
@@ -88,7 +123,7 @@ test("AI failures map to 502 / 429 quota", async () => {
   _resetRate();
   assert.equal((await worker.fetch(req({ line: "a b" }), env(new Error("boom")))).status, 502);
   assert.equal((await worker.fetch(req({ line: "a c" }), env(new Error("4006: you have used up your daily free allocation of 10,000 neurons")))).status, 429);
-  assert.equal((await worker.fetch(req({ line: "a d" }), env("I cannot help with that."))).status, 200);
+  assert.equal((await worker.fetch(req({ line: "a d" }), env("Under the moon we glow"))).status, 200);
   assert.equal((await worker.fetch(req({ line: "a e" }), env(""))).status, 502);
 });
 test("parsers and model output shapes", () => {

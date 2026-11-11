@@ -6,6 +6,7 @@
 //   GET /health
 // GET requests carry the JSON body in ?q= so identical requests are answered by Workers Cache (7 days) without
 // running the model again; an in-isolate LRU catches repeats too. No secrets in the client: env.AI is server-side.
+import { filterLines, filterBrainstorm } from "./filter.js";
 export const DEFAULT_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
 export const LIMITS = { line: 200, context: 600, mood: 40, rhymes: 40, word: 24, exclude: 60, excludeLen: 200, bodyBytes: 12000, count: 30 };
 export const MOODS = ["any", "related", "love", "heartbreak", "night", "ocean", "nature", "weather", "city", "party", "money", "fire",
@@ -124,10 +125,10 @@ export function buildBrainstorm(b) {
     { role: "system", content: "You are a rhyming dictionary with a hit songwriter's and rapper's ear. You output only JSON." },
     { role: "user", content: `Word: "${b.word}".${mood}${ctx}\nBrainstorm the rhymes a skilled rapper or pop songwriter would reach for with "${b.word}", ` +
       `favouring words connected to its meaning, imagery and emotions. Return one JSON object with these keys:\n` +
-      `"perfect": 30 single words that perfectly rhyme with "${b.word}" (same stressed vowel and same ending sound),\n` +
-      `"multi": 20 multi-syllable or compound rhymes — longer words or 2-3 word phrases whose final syllables rhyme with "${b.word}" (e.g. for "snow": "let it go", "below", "overflow"),\n` +
-      `"slant": 20 slant / assonance rhymes (same stressed vowel, similar ending),\n` +
-      `"phrases": 30 vivid 2-5 word lyric phrases that END with a rhyme for "${b.word}" and evoke its theme.\n` +
+      `"perfect": 12 single common words that perfectly rhyme with "${b.word}" (same stressed vowel and same ending sound),\n` +
+      `"multi": 8 multi-syllable words or short phrases whose final syllables rhyme with "${b.word}" (e.g. for "snow": "let it go", "below", "overflow"),\n` +
+      `"slant": 8 slant rhymes that are real English words (same stressed vowel, similar ending),\n` +
+      `"phrases": 10 vivid 2-5 word lyric phrases that END with a rhyme for "${b.word}".\n` +
       `Only real common words. Never invent a spelling. "let it go" is sayable; "in the slow" and "through the woe" are not. ` +
       `Lowercase, no explanations, ONLY the JSON object.` },
   ];
@@ -235,17 +236,18 @@ export default {
       if (kind === "lines") {
         const n = b.count || 6;
         const text = await runModel(env, model, buildMessages(b), Math.min(1600, 120 + n * 34), 0.85 + 0.01 * ((b.seed || 0) % 10));
-        const lines = parseLines(text, b.line, b.exclude || []);
+        const lines = filterLines(parseLines(text, b.line, b.exclude || []));
         if (!lines.length) return json(502, { error: "model returned no usable lines" }, h);
         body = { lines, model };
-        // editor pass: sense can only lower a line later. If it stalls or errors, the lines still go out.
+        // Judge only the lines that survived the dictionary and forced-rhyme filter, so the second call stays small.
         if (b.judge !== false && lines.length >= 2) {
           const sense = await judgeOrNull(env, model, b, lines);
           if (sense) body.sense = sense;
         }
       } else {
-        const text = await runModel(env, model, buildBrainstorm(b), 1400, 0.7);
-        const r = parseBrainstorm(text, b.word);
+        // ~40 short items instead of ~100. The previous 1400-token brainstorm was about 18s cold.
+        const text = await runModel(env, model, buildBrainstorm(b), 420, 0.6);
+        const r = filterBrainstorm(parseBrainstorm(text, b.word));
         if (!Object.values(r).some(a => a.length)) return json(502, { error: "model returned no usable rhymes" }, h);
         body = { ...r, model };
       }

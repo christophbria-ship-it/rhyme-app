@@ -161,7 +161,9 @@ const tailVowels=ph=>tail(ph).filter(isV).length;
 function svowelsPh(pl){const out=[];for(const p of pl){const v=tail(p).map(strip).filter(x=>VOWELS.has(x));if(v.length&&!out.includes(v[0]))out.push(v[0])}return out}
 // ---- related rhymes (port of Engine.related; association data lazy-loaded per vowel group) ----
 const pyRound=x=>{const f=Math.floor(x),d=x-f;return d>0.5?f+1:d<0.5?f:(f%2===0?f:f+1)};const DETS=new Set(["the","a","an","my","your","his","her","our","their","this","every","each"]);
-const WEAK_END=new Set("go show slow low woe so though tho".split(" ")),PREP=new Set("in on through from by at to of with for over under into across around upon within without along".split(" "));const TIER_Q={perfect:1,near:0.85,slant:0.7},ASSONANT_Q=0.5,SRC_W={ai:1,wikt:0.9,cn:0.5,combo:0.8};
+const WEAK_END=new Set("go show slow low woe so though tho".split(" ")),PREP=new Set("in on through from by at to of with for over under into across around upon within without along".split(" "));
+const BAD_END=[/\b(?:through|in|on|over|under|about|as)\s+the\s+(?:woe|tow|slow|show|grow|flow)\b/,/\ball\s+about\s+the\s+[a-z]+\b/,/\blet\s+it\s+(?!go\b)[a-z]+\b/,/\bto\s+bestow\b/,/\b(?:forest|street|streets|footstep|footsteps)\s+(?:flow|tow|woe|grow)\b/,/\bthe\s+(?:tow|woe)\b/];
+function badEnding(text){const s=(String(text||"").toLowerCase().match(/[a-z]+(?:'[a-z]+)?/g)||[]).join(" ");return BAD_END.some(r=>r.test(s))}const TIER_Q={perfect:1,near:0.85,slant:0.7},ASSONANT_Q=0.5,SRC_W={ai:1,wikt:0.9,cn:0.5,combo:0.8};
 let AV=null,AVp=null;const AQ={},AG={},AP={};
 const stemClash=(w,c)=>(w.length>=4&&c.startsWith(w.slice(0,4)))||w.startsWith(c)||(c.length>=4&&w.startsWith(c.slice(0,4)));
 const abase=()=>new URL('data/assoc/',document.baseURI);
@@ -227,7 +229,7 @@ function verify(word,items){const w=String(word||"").trim().toLowerCase();if(!WO
   const cd=candidates(w),qph=cd.prons.length?cd.prons[0]:[],tierOf=new Map();for(const t of["slant","near","perfect"])for(const[c]of cd[t])tierOf.set(c,t);
   const qtail=qph.length?tailVowels(qph):1,out=[],seen=new Set(),pre=new Map(),ends=new Map();
   for(const raw of items){const text=raw.toLowerCase().replace(/[^a-z' \-]/g," ").replace(/\s+/g," ").trim();const toks=text.replace(/-/g," ").split(" ").filter(Boolean);
-    if(!toks.length||seen.has(text)||toks[toks.length-1]===w)continue;seen.add(text);let t;
+    if(!toks.length||seen.has(text)||toks[toks.length-1]===w||badEnding(text))continue;seen.add(text);let t;
     const lw=toks[toks.length-1],last=W.info.get(lw);
     if(!last||!last.pos.length||last.freq<2.8||lw.length<2||(toks.length===1&&LX().relStop.has(lw))||LX().filler.has(lw))continue;
     if(toks.some(x=>!W.info.has(x)||W.info.get(x).freq<2.5))continue;
@@ -265,7 +267,7 @@ function rankLines(line,lines,keep=8,sense=null){if(typeof line!=="string"||!lin
     const parrot=toks.length>=2&&stoks.length>=2&&toks[toks.length-2].toLowerCase()===stoks[stoks.length-2].toLowerCase()&&t!=="repeat",multi=parrot?0:Math.max(0,vm-tailV);
     const inl=internal([...toks.slice(0,-1),e]);
     const prev=toks.length>=2?toks[toks.length-2].toLowerCase().replace(/^'+|'+$/g,""):"";
-    const forced=t!=="none"&&t!=="repeat"&&WEAK_END.has(e)&&!!prev&&W.info.has(prev)&&W.info.get(prev).pos.includes("adj");
+    let forced=t!=="none"&&t!=="repeat"&&WEAK_END.has(e)&&!!prev&&W.info.has(prev)&&W.info.get(prev).pos.includes("adj");
     const sd=Math.abs(a.syllables-src.syllables),low=" "+toks.map(x=>x.toLowerCase()).join(" ")+" ";
     const cliche=LX().cliches.some(c=>low.includes(" "+c+" "));
     let sc=TIER_BASE[t]*(filler?0.35:1);if(t!=="none"&&t!=="repeat"&&!filler)sc+=Math.min(20,10*multi);
@@ -274,6 +276,7 @@ function rankLines(line,lines,keep=8,sense=null){if(typeof line!=="string"||!lin
     let coh=null;if(qa&&["perfect","near","slant","assonant"].includes(t)){for(const v of evs){const hit=alookup(v,e);if(hit){coh=cos(qa[0],qa[1],hit[0],hit[1]);break}}
       if(coh!==null)sc+=coh>=0.3?6:coh>=0.18?3:coh<0.06?-6:0}
     sc+=Math.max(0,6-Math.floor(i/4));let sn=null;if(sense!=null&&t!=="none"&&t!=="repeat"){sn=pyRound(sense[i]);if(sn<=3)sc-=24;else if(sn<=5)sc-=10}
+    if(badEnding(text)){forced=true;sc=0}
     return{text:text.trim(),end:e,tier:t,syllables:a.syllables,syllable_diff:sd,multi,internal:inl,filler,cliche,forced,assoc:coh===null?null:r3(coh),sense:sn,score:Math.max(0,Math.min(100,pyRound(sc))),_i:i}});
   out.sort((a,b)=>b.score-a.score||a._i-b._i);const ends=new Map(),bags=[];
   for(const x of out){if(x.end===null)continue;const bag=new Set((x.text.match(TOKEN)||[]).map(t=>t.toLowerCase()).filter(t=>!LX().stop.has(t)));let pen=0;
