@@ -10,5 +10,15 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: "20" }
       - run: cd worker && node --test test/*.test.js
-      - run: pip install pytest playwright && python -m playwright install --with-deps chromium
+      - name: Install pytest and Chromium
+        run: |
+          set -euo pipefail
+          pip install pytest playwright
+          ok=0
+          for i in 1 2 3; do
+            if python -m playwright install --with-deps chromium; then ok=1; break; fi
+            echo "playwright install failed (attempt $i); apt could not resolve a mirror"
+            sleep 20
+          done
+          test "$ok" = 1
       - run: python build_index.py && python -m pytest -v tests && python tests/stress.py
