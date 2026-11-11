@@ -92,6 +92,7 @@ export function buildMessages(b) {
       `Best of all: multi-syllable rhymes that echo the vowel sounds of the last syllables "${tail2}" vowel for vowel. ` +
       `Never end on filler (though, so, too, oh, yeah, it, now, then), never end on "${end}" itself, and don't reuse an end word. ` +
       `Never force a rhyme: every line must make sense and sound like something a real artist would sing. ` +
+      `Do not glue an adjective onto go, show, slow, or woe. Failures, not models: "moments lost in the silent slow", "midnight hours tick by in a steady go", "a lonely figure in the distant show". ` +
       `Work backwards: choose a strong rhyme word or phrase first, then build the whole line so it lands there naturally and grammatically ` +
       `(a noun after "the/a/my", a verb where a verb belongs; e.g. for "drum": "till the feeling in my chest goes numb" — never nonsense like "snapping to the succumb").\n` +
       `2. RHYTHM: ${syl}, natural stress, easy to sing.\n` +
@@ -106,7 +107,7 @@ export function buildJudge(b, lines) {
     { role: "user", content: `Previous lyric line: "${b.line.trim()}"\nCandidate next lines:\n${lines.map((l, i) => `${i + 1}. ${l}`).join("\n")}\n\n` +
       `Score each candidate 0-10 as a next line a top songwriter would keep. Be harsh: most candidates deserve 3-6; 9-10 only for lines good enough for a hit record. ` +
       `Check: it makes literal or poetic sense, grammar is natural (no missing words, no odd word order), ` +
-      `the final rhyme word lands naturally (forced, odd or nonsense rhyme words like "kneading bread with hands of dough" score 0-3), ` +
+      `the final rhyme word lands naturally (forced, odd or nonsense rhyme words like "kneading bread with hands of dough", "silent slow", "steady go" score 0-3), ` +
       `vivid and fresh imagery scores higher, clichés lower. Reply with ONLY a JSON array of ${lines.length} integers in the same order.` },
   ];
 }
@@ -127,6 +128,7 @@ export function buildBrainstorm(b) {
       `"multi": 20 multi-syllable or compound rhymes — longer words or 2-3 word phrases whose final syllables rhyme with "${b.word}" (e.g. for "snow": "let it go", "below", "overflow"),\n` +
       `"slant": 20 slant / assonance rhymes (same stressed vowel, similar ending),\n` +
       `"phrases": 30 vivid 2-5 word lyric phrases that END with a rhyme for "${b.word}" and evoke its theme.\n` +
+      `Only real common words. Never invent a spelling. "let it go" is sayable; "in the slow" and "through the woe" are not. ` +
       `Lowercase, no explanations, ONLY the JSON object.` },
   ];
 }

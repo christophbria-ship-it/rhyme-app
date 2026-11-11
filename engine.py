@@ -198,6 +198,9 @@ it's don't can't won't ain't you're we're they're im""".split())
 PARTICLES = set("up down out in on off away back over around through along apart aside by".split())
 FILLER = set("though tho so too oh ooh yeah yea uh huh it that this then and but or the a an to of just anyway somehow indeed".split())
 DETS = {"the", "a", "an", "my", "your", "his", "her", "our", "their", "this", "every", "each"}
+# Easy landings the model glues on ("silent slow", "steady go", "distant show").
+WEAK_END = {"go", "show", "slow", "low", "woe", "so", "though", "tho"}
+PREP = set("in on through from by at to of with for over under into across around upon within without along".split())
 TIER_Q = {"perfect": 1.0, "near": 0.85, "slant": 0.7}
 ASSONANT_Q = 0.5
 REDUCED = {"AH", "IH", "UH"}
@@ -455,6 +458,10 @@ def _verify(self, word, items):
         last = self.info.get(toks[-1])
         if not last or not last["pos"] or last["freq"] < 2.8 or len(toks[-1]) < 2 or (len(toks) == 1 and toks[-1] in REL_STOP) or toks[-1] in FILLER: continue
         if any(x not in self.info or self.info[x]["freq"] < 2.5 for x in toks): continue
+        # "in the slow" / "through the woe": function words plus a non-noun or a thin rhyme.
+        # "let it go" stays (it has a verb). "in the glow" stays (glow is a common noun).
+        if len(toks) > 1 and all(x in FUNC or x in PREP or x in DETS or x in REL_STOP for x in toks[:-1]):
+            if "n" not in last["pos"] or toks[-1] in WEAK_END or last["freq"] < 3.6: continue
         if len(toks) > 1:
             k2 = " ".join(toks[:2]); pre[k2] = pre.get(k2, 0) + 1; ends[toks[-1]] = ends.get(toks[-1], 0) + 1
             if pre[k2] > 2 or ends[toks[-1]] > 2: continue  # "gonna be the light / might / sight / right ..."
@@ -533,7 +540,7 @@ def _rank_lines(self, line, lines, keep=8, sense=None):
         a = self.analyze(text.strip())["lines"][0] if text.strip() else {"words": []}
         if not a["words"]:
             out.append({"text": text, "end": None, "tier": "none", "syllables": 0, "syllable_diff": src["syllables"], "multi": 0,
-                        "internal": 0, "filler": False, "cliche": False, "assoc": None, "sense": None, "score": 0, "_i": i}); continue
+                        "internal": 0, "filler": False, "cliche": False, "forced": False, "assoc": None, "sense": None, "score": 0, "_i": i}); continue
         e = a["end"]
         if e == end: t = "repeat"
         elif e in tiers: t = tiers[e]
@@ -548,6 +555,8 @@ def _rank_lines(self, line, lines, keep=8, sense=None):
         parrot = len(toks) >= 2 and len(stoks) >= 2 and toks[-2].lower() == stoks[-2].lower() and t != "repeat"
         if parrot: multi = 0
         internal = _internal(self, toks[:-1] + [e])
+        prev = toks[-2].lower().strip("'") if len(toks) >= 2 else ""
+        forced = t not in ("none", "repeat") and e in WEAK_END and "adj" in (self.info.get(prev) or {}).get("pos", [])
         sd = abs(a["syllables"] - src["syllables"])
         low = " " + " ".join(x.lower() for x in toks) + " "
         cliche = any(" " + c + " " in low for c in CLICHES)
@@ -559,6 +568,7 @@ def _rank_lines(self, line, lines, keep=8, sense=None):
         if parrot: sc -= 10
         if len(toks) >= 2 and toks[-2].lower() in DETS and e in self.info and self.info[e]["pos"] and "n" not in self.info[e]["pos"]: sc -= 20  # "to the succumb"
         if not filler and e in STOPWORDS and e not in PARTICLES and end not in STOPWORDS: sc -= 15  # dangling "from"/"them"/"some"
+        if forced: sc -= 60
         if len(toks) < 3: sc -= 10
         ef = self.info[e]["freq"] if e in self.info else 0
         if t not in ("none", "repeat"): sc -= 12 if ef < 3.0 else 6 if ef < 3.5 else 0  # forced, obscure rhyme words
@@ -570,11 +580,13 @@ def _rank_lines(self, line, lines, keep=8, sense=None):
             if coh is not None: sc += 6 if coh >= 0.3 else 3 if coh >= 0.18 else -6 if coh < 0.06 else 0  # does the rhyme word belong?
         sc += max(0, 6 - i // 4)  # the model lists its best ideas first
         sn = None
+        # A high self-score is not proof the line is good. A low one still counts against it.
         if sense is not None and t not in ("none", "repeat"):
-            sn = round(sense[i]); sc += max(-30, min(20, (sn - 6) * 5))
-            if sn <= 3: sc -= 15  # editor pass rated it nonsense / forced
+            sn = round(sense[i])
+            if sn <= 3: sc -= 24
+            elif sn <= 5: sc -= 10
         out.append({"text": text.strip(), "end": e, "tier": t, "syllables": a["syllables"], "syllable_diff": sd, "multi": multi,
-                    "internal": internal, "filler": filler, "cliche": cliche, "assoc": round(coh, 3) if coh is not None else None, "sense": sn,
+                    "internal": internal, "filler": filler, "cliche": cliche, "forced": forced, "assoc": round(coh, 3) if coh is not None else None, "sense": sn,
                     "score": max(0, min(100, round(sc))), "_i": i})
     # variety: penalise reused end words and near-duplicate lines (bag of content words)
     out.sort(key=lambda x: (-x["score"], x["_i"]))

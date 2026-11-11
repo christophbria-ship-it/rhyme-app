@@ -187,7 +187,7 @@ function makeAI(box,{getInput,onInsert}){
     if(lines.some(t=>senseOf.has(t)))body.sense=lines.map(t=>senseOf.has(t)?senseOf.get(t):6);
     const rr=await fetch('api/rank_lines',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     if(!rr.ok)return lines.map(t=>({text:t,tier:'none',syllables:0,score:0,multi:0,internal:0}));return(await rr.json()).lines}
-  function showNext(){const fresh=pool.filter(x=>!shownTexts.has(x.text)&&x.tier!=='none'&&x.score>=35).slice(0,8);fresh.forEach(x=>shownTexts.add(x.text));
+  function showNext(){const fresh=pool.filter(x=>!shownTexts.has(x.text)&&x.tier!=='none'&&x.score>=40).slice(0,8);fresh.forEach(x=>shownTexts.add(x.text));
     list.insertAdjacentHTML('beforeend',fresh.map(row).join(''));return fresh.length}
   async function run(isMore){if(busy)return;const inp=getInput();if(!inp||!inp.line.trim()){box.hidden=false;box.dataset.state='error';st.innerHTML='<div class="err" role="alert">Write a lyric line first.</div>';return}
     busy=true;box.hidden=false;const line=inp.line.trim().slice(0,200);
