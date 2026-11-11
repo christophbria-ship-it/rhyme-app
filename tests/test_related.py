@@ -118,7 +118,10 @@ def test_rank_sense_and_grammar(engine):
     r = {x["text"]: x for x in engine.rank_lines(line, c, sense=[9, 9, 9])["lines"]}
     assert r[c[1]]["score"] > r[c[0]]["score"] and r[c[1]]["score"] > r[c[2]]["score"]   # "the succumb" (verb after "the"), dangling "some"
     hi = engine.rank_lines(line, c, sense=[10, 10, 10])["lines"]; lo = engine.rank_lines(line, c, sense=[0, 0, 0])["lines"]
-    assert all(a["score"] > b["score"] for a, b in zip(sorted(hi, key=lambda x: x["text"]), sorted(lo, key=lambda x: x["text"])))
+    # A verb after "the" is rejected outright, so a self-score of 10 cannot lift it. The other lines still move.
+    paired = list(zip(sorted(hi, key=lambda x: x["text"]), sorted(lo, key=lambda x: x["text"])))
+    assert any(a["score"] == b["score"] == 0 and a["forced"] for a, b in paired)
+    assert all(a["score"] > b["score"] for a, b in paired if a["score"] or b["score"])
     assert {x["sense"] for x in hi} == {10}
     for bad in ([1, 2], [11, 0, 0], ["a", 1, 1], [True, 1, 1]):
         with pytest.raises(ValueError): engine.rank_lines(line, c, sense=bad)
@@ -145,6 +148,25 @@ def test_live_worker_junk_is_rejected(engine):
     keep = {x["text"] for x in engine.verify("snow", ["soo", "forso", "beho", "kno", "all about the woe", "the tow",
                                                       "forest flow", "let it grow", "let it go", "glow", "below"])["items"]}
     assert keep == {"let it go", "glow", "below"}, keep
+
+def test_rare_adjective_landings_are_rejected(engine):
+    """Live worker v10 still returned these for "walking through the falling snow"."""
+    src = "walking through the falling snow"
+    bad = ["footsteps quiet on the frozen tow", "night air whispering a soft bestow"]
+    good = ["The world is hushed and white below", "Our footprints fading as we go",
+            "I feel the winter wind blow", "stalling in the cold below", "call someone for a tow"]
+    r = {x["text"]: x for x in engine.rank_lines(src, bad + good, sense=[8] * (len(bad) + len(good)))["lines"]}
+    for line in bad:
+        assert r[line]["forced"] and r[line]["score"] == 0 and not r[line]["keep"], line
+    for line in good:
+        assert not r[line]["forced"] and r[line]["keep"] and r[line]["score"] >= 40, (line, r[line]["score"])
+    # A rare noun the source already used is a real choice. A verb parked in a noun slot is not.
+    kept = engine.rank_lines("the frozen tow sat in the snow", ["still stuck on the frozen tow"])["lines"][0]
+    assert not kept["forced"] and kept["score"] >= 40
+    still = engine.rank_lines(src, ["a soft bestow"])["lines"][0]
+    assert still["forced"] and still["score"] == 0
+    keep = {x["text"] for x in engine.verify("snow", bad + ["the frozen tow", "a soft bestow", "let it go", "glow", "below", "in the glow", "white glow"])["items"]}
+    assert keep == {"let it go", "glow", "below", "in the glow", "white glow"}, keep
 
 def test_verify_rejects_forced_snow_phrases(engine):
     keep = {x["text"] for x in engine.verify("snow", ["soo", "in the slow", "through the woe", "let it go", "glow", "in the glow", "white glow"])["items"]}
